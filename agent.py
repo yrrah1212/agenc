@@ -278,18 +278,80 @@ def resolve_and_check_paths(cmd_str: str) -> Optional[str]:
     return None
 
 
-def compress_output(stdout: str, stderr: str, returncode: int) -> tuple[str, str]:
+# Commands whose output IS the payload — never compress on success.
+# Covers the first command in a pipeline (e.g. "git diff | head" → "git").
+CONTENT_COMMANDS = frozenset(
+    {
+        "cat",
+        "head",
+        "tail",
+        "grep",
+        "egrep",
+        "rg",
+        "awk",
+        "sed",
+        "diff",
+        "hexdump",
+        "xxd",
+        "bat",
+    }
+)
+
+# Git subcommands whose output is content, not progress noise.
+CONTENT_GIT_SUBCOMMANDS = frozenset(
+    {
+        "diff",
+        "show",
+        "log",
+        "blame",
+        "shortlog",
+        "cat-file",
+        "ls-files",
+        "ls-tree",
+    }
+)
+
+
+def is_content_command(cmd_str: str) -> bool:
+    """Return True if the first command in the pipeline produces content output."""
+    first_segment = cmd_str.split("|")[0].strip()
+    try:
+        parts = shlex.split(first_segment)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+
+    base_cmd = Path(parts[0]).name
+
+    if base_cmd in CONTENT_COMMANDS:
+        return True
+
+    if base_cmd == "git":
+        # Find the subcommand (skip flags)
+        for arg in parts[1:]:
+            if not arg.startswith("-"):
+                return arg in CONTENT_GIT_SUBCOMMANDS
+    return False
+
+
+def compress_output(
+    stdout: str, stderr: str, returncode: int, *, content: bool = False
+) -> tuple[str, str]:
     """Compress command output intelligently based on exit code.
 
     Success (rc=0): the model usually just needs confirmation + a glimpse.
     Failure (rc!=0): the model needs enough context to diagnose the problem.
+
+    If content=True, skip compression on success (the output IS the answer).
     """
     lines = stdout.splitlines()
     num_lines = len(lines)
 
     if returncode == 0:
-        # Happy path — aggressively compress
-        if num_lines <= 60:
+        if content:
+            pass  # never compress content commands on success
+        elif num_lines <= 60:
             pass  # short enough, keep as-is
         elif num_lines <= 200:
             # Medium output: first 10 + last 20 lines
@@ -326,7 +388,7 @@ def compress_output(stdout: str, stderr: str, returncode: int) -> tuple[str, str
 
 
 def run_shell(cmd_str: str) -> dict:
-    """Validate and execute a read-only shell command.  Returns {stdout, stderr, returncode}."""
+    """Validate and execute a shell command.  Returns {stdout, stderr, returncode}."""
     error = validate_command(cmd_str)
     if error:
         return {"stdout": "", "stderr": error, "returncode": 1}
@@ -344,7 +406,10 @@ def run_shell(cmd_str: str) -> dict:
             timeout=30,
             text=True,
         )
-        stdout, stderr = compress_output(proc.stdout, proc.stderr, proc.returncode)
+        content = is_content_command(cmd_str)
+        stdout, stderr = compress_output(
+            proc.stdout, proc.stderr, proc.returncode, content=content
+        )
         return {"stdout": stdout, "stderr": stderr, "returncode": proc.returncode}
     except subprocess.TimeoutExpired:
         return {"stdout": "", "stderr": "Command timed out (30s limit).", "returncode": 1}
