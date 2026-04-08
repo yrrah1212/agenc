@@ -134,15 +134,20 @@ The agent runs in a multi-layer sandbox:
 ## Architecture
 
 ```
-agent.py (single file)
-├── Configuration         — env vars, allow/block lists
-├── Git validation        — subcommand allow-list + blocked flags
-├── Sandbox               — validate_command(), run_shell()
-├── Output compression    — compress_output() with content-awareness
-├── File write tools      — create_file, edit_file with path jail + confirmation
-├── Tool definitions      — OpenAI function-calling schema (bash, create_file, edit_file)
-├── System prompt         — coding assistant instructions
-└── REPL loop             — input → model → tool calls → display
+agent.py        — main entry point, system prompt, REPL loop, agent logic
+config.py       — environment variables, allow/block lists, constants
+git.py          — git subcommand validation
+sandbox.py      — command validation, path jailing, output compression, run_shell()
+tools.py        — tool schema, handlers for bash/create_file/edit_file, display helpers
+```
+
+**Module dependencies:**
+```
+agent.py
+  └── tools.py
+        └── sandbox.py
+              └── git.py
+              └── config.py
 ```
 
 The agent uses a simple agentic loop: it sends the conversation to the model, and if the model responds with tool calls, it executes them and feeds results back until the model produces a final text response.

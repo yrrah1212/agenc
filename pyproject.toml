@@ -1,8 +1,8 @@
 [project]
 name = "agenc"
-version = "0.2.0"
+version = "0.3.0"
 description = "A code review agent that connects to any OpenAI-compatible endpoint."
-readme = "README.md"
+readme = "readme.md"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0",
@@ -15,3 +15,7 @@ agenc = "agent:main"
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["agent", "config", "git", "sandbox", "tools"]
+
