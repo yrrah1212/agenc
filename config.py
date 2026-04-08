@@ -7,6 +7,7 @@ for the sandbox and git validation.
 
 import os
 import re
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Environment variables
@@ -16,6 +17,7 @@ DEFAULT_MODEL = os.environ.get("AGENC_MODEL", "gpt-4o")
 DEFAULT_BASE_URL = os.environ.get("AGENC_BASE_URL", "https://api.openai.com/v1")
 API_KEY = os.environ.get("AGENC_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 AUTO_WRITE = os.environ.get("AGENC_AUTO_WRITE", "").lower() in ("1", "true", "yes")
+CWD = Path.cwd().resolve()
 
 # ---------------------------------------------------------------------------
 # Shell command allow-list
@@ -109,9 +111,6 @@ ALLOWED_GIT_SUBCOMMANDS = frozenset(
         # Making commits
         "add",
         "commit",
-        # Branch switching (needed for development workflow)
-        "checkout",
-        "switch",
     }
 )
 

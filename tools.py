@@ -5,12 +5,12 @@ This module defines the OpenAI function-calling schema and implements
 handlers for bash, create_file, and edit_file tools.
 """
 
-import json
 from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
 from rich.syntax import Syntax
+from rich.theme import Theme
 
 from config import AUTO_WRITE, CWD
 from sandbox import run_shell
@@ -18,8 +18,6 @@ from sandbox import run_shell
 # ---------------------------------------------------------------------------
 # Console setup
 # ---------------------------------------------------------------------------
-
-from rich.theme import Theme
 
 console = Console(
     theme=Theme(
@@ -281,7 +279,7 @@ def handle_edit_file(args: dict) -> str:
     # Apply the edit
     try:
         new_content = original.replace(old_str, new_str, 1)
-        resolved.write_text(new_content)
+        resolved.write_text(new_content, encoding="utf-8")
         return f"Edited {rel_path}: replaced {len(old_lines)} lines with {len(new_lines)} lines at line {start_line}."
     except Exception as exc:
         return f"Error writing file: {exc}"
