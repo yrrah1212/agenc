@@ -77,7 +77,7 @@ BLOCKED_PATTERNS = re.compile(
     ( \brm\s | \brmdir\b | \bmv\s | \bcp\s | \bchmod\b | \bchown\b | \bchgrp\b | \bmkfs\b | \bdd\s
     | >\s | >>  | \btee\s
     | \bcurl\b | \bwget\b | \bnc\s | \bncat\b | \bsocat\b
-    | \bpython\b | \bpython3\b | \bperl\b | \bruby\b | \bnode\b | \bbash\b | \bsh\s | \bzsh\b
+    | \bpython\b | \bpython3\b | \bperl\b | \bruby\b | \bnode\b | \bbash\b | \bsh\b | \bzsh\b
     | \bsudo\b | \bsu\s
     | \bkill\b | \bpkill\b | \breboot\b | \bshutdown\b
     | \bapt\b | \byum\b | \bdnf\b | \bpacman\b | \bbrew\b
@@ -274,7 +274,7 @@ def resolve_and_check_paths(cmd_str: str) -> Optional[str]:
                 resolved = (CWD / arg).resolve()
             except (OSError, ValueError):
                 continue
-            if not str(resolved).startswith(str(CWD)):
+            if not str(resolved).startswith(str(CWD) + "/") and resolved != CWD:
                 return f"Path '{arg}' resolves outside the working directory."
     return None
 
@@ -431,7 +431,7 @@ def validate_file_path(path_str: str) -> tuple[Optional[Path], Optional[str]]:
         resolved = (CWD / path_str).resolve()
     except (OSError, ValueError) as exc:
         return None, f"Invalid path: {exc}"
-    if not str(resolved).startswith(str(CWD)):
+    if not str(resolved).startswith(str(CWD) + "/") and resolved != CWD:
         return None, f"Path '{path_str}' resolves outside the working directory."
     return resolved, None
 
@@ -503,7 +503,7 @@ def handle_create_file(args: dict) -> str:
     # Write the file
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content)
+        resolved.write_text(content, encoding="utf-8")
         return f"File {'overwritten' if exists else 'created'}: {resolved.relative_to(CWD)} ({len(lines)} lines)"
     except Exception as exc:
         return f"Error writing file: {exc}"
@@ -523,7 +523,7 @@ def handle_edit_file(args: dict) -> str:
         return f"Error: File not found: {path_str}"
 
     try:
-        original = resolved.read_text()
+        original = resolved.read_text(encoding="utf-8")
     except Exception as exc:
         return f"Error reading file: {exc}"
 
