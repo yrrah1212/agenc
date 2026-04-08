@@ -76,7 +76,7 @@ BLOCKED_PATTERNS = re.compile(
     ( \brm\s | \brmdir\b | \bmv\s | \bcp\s | \bchmod\b | \bchown\b | \bchgrp\b | \bmkfs\b | \bdd\s
     | >\s | >>  | \btee\s
     | \bcurl\b | \bwget\b | \bnc\s | \bncat\b | \bsocat\b
-    | \bpython\b | \bpython3\b | \bperl\b | \bruby\b | \bnode\b | \bbash\b | \bsh\s | \bzsh\b
+    | \bpython\b | \bpython3\b | \bperl\b | \bruby\b | \bnode\b | \bbash\b | \bsh\b | \bzsh\b
     | \bsudo\b | \bsu\s
     | \bkill\b | \bpkill\b | \breboot\b | \bshutdown\b
     | \bapt\b | \byum\b | \bdnf\b | \bpacman\b | \bbrew\b
@@ -273,7 +273,7 @@ def resolve_and_check_paths(cmd_str: str) -> Optional[str]:
                 resolved = (CWD / arg).resolve()
             except (OSError, ValueError):
                 continue
-            if not str(resolved).startswith(str(CWD)):
+            if not str(resolved).startswith(str(CWD) + "/") and resolved != CWD:
                 return f"Path '{arg}' resolves outside the working directory."
     return None
 
