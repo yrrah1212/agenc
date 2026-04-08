@@ -1,14 +1,14 @@
 # agenc
 
-A code review agent that runs in your terminal and connects to any OpenAI-compatible endpoint. It explores your repo with sandboxed shell commands, reviews your code, and can stage and commit changes.
+A coding agent that runs in your terminal and connects to any OpenAI-compatible endpoint. It explores your repo with sandboxed shell commands, reviews your code, creates and edits files, and can stage and commit changes.
 
 ## Quick start
 
 ```bash
-# Install dependencies
-pip install openai rich
+# Install (creates a venv + installs deps from pyproject.toml)
+make
 
-# Configure your endpoint (pick one)
+# Configure your endpoint
 export AGENC_API_KEY="sk-..."
 export AGENC_BASE_URL="https://api.openai.com/v1"   # default
 export AGENC_MODEL="gpt-4o"                          # default
@@ -26,17 +26,21 @@ export AGENC_MODEL="anthropic/claude-sonnet-4"
 # Run from your repo root
 cd /path/to/your/repo
 python /path/to/agenc/agent.py
+
+# Or use the Makefile
+make run
 ```
 
 ## Features
 
-- **Interactive REPL** — conversational code review in your terminal
+- **Interactive REPL** — conversational coding assistant in your terminal
+- **File creation & editing** — `create_file` for new files, `edit_file` for surgical string-replacement edits, both with user confirmation
 - **Read-only sandbox** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code
 - **Git integration** — read repo state (`status`, `diff`, `log`, `blame`, ...) and make commits (`add`, `commit`)
 - **Smart output compression** — successful commands are summarized to save context; failures preserve full detail
 - **Path jailing** — all file access is restricted to the current working directory
 - **Any OpenAI-compatible endpoint** — works with OpenAI, Ollama, OpenRouter, llama.cpp, vLLM, etc.
-- **Rich terminal output** — markdown rendering, syntax highlighting
+- **Rich terminal output** — markdown rendering, syntax highlighting, diff previews
 
 ## REPL commands
 
@@ -47,6 +51,30 @@ python /path/to/agenc/agent.py
 | `/clear`       | Clear conversation history     |
 | `/model <n>`   | Switch model mid-session       |
 | `/cwd`         | Print working directory        |
+
+## File editing
+
+The agent has two tools for modifying files:
+
+**`create_file`** — write a new file or overwrite an existing one. The agent provides the full file content. Use for new files or full rewrites.
+
+**`edit_file`** — surgical string replacement. The agent specifies an exact string to find (`old_str`) and its replacement (`new_str`). The match must be unique in the file. Use for focused, minimal edits.
+
+Both tools show a preview and require user confirmation before writing:
+
+```
+  ▸ create: src/utils.py (24 lines)
+  1 def parse_config(path: str):
+  2     ...
+  Apply create? [y/n]:
+
+  ▸ edit: src/main.py (line 12)
+  - old_value = get_data()
+  + old_value = get_data(timeout=30)
+  Apply edit? [y/n]:
+```
+
+Set `AGENC_AUTO_WRITE=1` to skip confirmations (auto-approve all writes).
 
 ## Git support
 
@@ -60,7 +88,7 @@ The agent can interact with git at the subcommand level:
 
 ## Output compression
 
-Command output is automatically compressed to keep the model's context window clean:
+Command output is automatically compressed to keep the model's context window clean. Content commands (`cat`, `grep`, `git diff`, `git log`, etc.) are never compressed on success. Non-content commands (`ls`, `find`, `tree`, `git status`, etc.) are compressed:
 
 | Scenario                  | Behavior                                           |
 |---------------------------|----------------------------------------------------|
@@ -74,18 +102,34 @@ Stderr is always preserved in full on failure. A byte-level safety net truncates
 
 ## Security model
 
-The agent runs shell commands in a two-layer sandbox:
+The agent runs in a multi-layer sandbox:
 
-**Layer 1 — Command validation:**
+**Layer 1 — Command validation (bash tool):**
 - Read-only utilities are allow-listed: `ls`, `cat`, `grep`, `head`, `tail`, `find`, `tree`, `wc`, `rg`, `fd`, `diff`, `awk`, `sed`, `sort`, `uniq`, `cut`, `tr`, etc.
 - `git` is validated at the subcommand level (see above).
 - `sed -i` (in-place edit) is explicitly blocked.
 - Dangerous patterns are rejected with word-boundary matching: `rm`, `mv`, `cp`, `curl`, `python`, `sudo`, `bash`, `$(...)`, backticks, output redirection (`>`, `>>`), etc.
 
-**Layer 2 — Path jailing:**
+**Layer 2 — Path jailing (all tools):**
 - All path arguments are resolved and must stay within `$CWD`.
-- Commands time out after 30 seconds.
+- Symlink escapes are caught by `Path.resolve()`.
+
+**Layer 3 — User confirmation (write tools):**
+- `create_file` and `edit_file` show a preview and require `y/n` approval.
+- Set `AGENC_AUTO_WRITE=1` to auto-approve.
+
+**Layer 4 — Resource limits:**
+- Shell commands time out after 30 seconds.
 - Output is capped at 100KB.
+
+## Configuration
+
+| Env var             | Default                        | Description                          |
+|---------------------|--------------------------------|--------------------------------------|
+| `AGENC_API_KEY`     | `$OPENAI_API_KEY`              | API key for the model endpoint       |
+| `AGENC_BASE_URL`    | `https://api.openai.com/v1`    | OpenAI-compatible endpoint URL       |
+| `AGENC_MODEL`       | `gpt-4o`                       | Model name                           |
+| `AGENC_AUTO_WRITE`  | off                            | Set to `1` to auto-approve file writes |
 
 ## Architecture
 
@@ -94,9 +138,10 @@ agent.py (single file)
 ├── Configuration         — env vars, allow/block lists
 ├── Git validation        — subcommand allow-list + blocked flags
 ├── Sandbox               — validate_command(), run_shell()
-├── Output compression    — compress_output() based on exit code
-├── Tool definitions      — OpenAI function-calling schema
-├── System prompt         — review-focused instructions
+├── Output compression    — compress_output() with content-awareness
+├── File write tools      — create_file, edit_file with path jail + confirmation
+├── Tool definitions      — OpenAI function-calling schema (bash, create_file, edit_file)
+├── System prompt         — coding assistant instructions
 └── REPL loop             — input → model → tool calls → display
 ```
 
