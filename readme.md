@@ -35,7 +35,7 @@ make run
 
 - **Interactive REPL** — conversational coding assistant in your terminal, with history and multi-line input (paste freely; Alt+Enter inserts a newline, Enter sends)
 - **File creation & editing** — `create_file` for new files, `edit_file` for surgical string-replacement edits, both with user confirmation
-- **Read-only sandbox** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code
+- **Sandboxed shell** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code; destructive commands are blocked
 - **Git integration** — read repo state (`status`, `diff`, `log`, `blame`, ...) and make commits (`add`, `commit`)
 - **Smart output compression** — successful commands are summarized to save context; failures preserve full detail
 - **Path jailing** — all file access is restricted to the current working directory
