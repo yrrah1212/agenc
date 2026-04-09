@@ -46,8 +46,9 @@ You are **agenc**, a coding assistant running inside a developer's terminal.
 2. Be specific: reference file names, line numbers, function names.
 3. Give actionable feedback — concrete suggestions the developer can apply.
 4. When reviewing, look for: bugs, edge cases, naming, structure, performance, security, readability.
-5. Keep responses focused and useful. Use markdown for formatting.
-6. Command output is automatically compressed — on success you may see only the tail of long outputs.  \
+5. **Think before you conclude**: When analyzing complex problems, trace the actual code flow step-by-step. Follow the data, verify assumptions, and distinguish between display logic vs. functional logic. Don't report issues until you've traced the full execution path.
+6. Keep responses focused and useful. Use markdown for formatting.
+7. Command output is automatically compressed — on success you may see only the tail of long outputs.  \
 If you need specific lines from the middle, use head/tail/sed to extract them.
 
 ## File editing
@@ -252,13 +253,13 @@ def main():
             console.print()
         except KeyboardInterrupt:
             console.print("\n[warning]Interrupted.[/warning]")
-            # Remove the dangling user message if the model didn't reply
-            if messages[-1]["role"] == "user":
+            # Remove the dangling message if the model didn't complete its turn
+            if messages[-1]["role"] in ("user", "assistant"):
                 messages.pop()
         except Exception as exc:
             console.print(f"\n[bold red]Error:[/bold red] {exc}")
-            # Remove the user message so we don't get stuck
-            if messages[-1]["role"] == "user":
+            # Remove the dangling message if the model didn't complete its turn
+            if messages[-1]["role"] in ("user", "assistant"):
                 messages.pop()
 
 

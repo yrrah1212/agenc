@@ -144,8 +144,7 @@ def compress_output(
                 f"[FAILED — {num_lines} lines total, showing last 80]\n"
                 + "\n".join(lines[-80:])
             )
-        # On failure, always preserve full stderr
-        # (no truncation on stderr for errors)
+        # On failure, preserve stderr (subject to the 100KB safety net below)
 
     # Final byte-level safety net
     if len(stdout) > MAX_OUTPUT_BYTES:
