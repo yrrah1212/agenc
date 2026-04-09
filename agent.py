@@ -6,6 +6,7 @@ It explores your repo with sandboxed shell commands and gives you feedback on yo
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 from openai import OpenAI
@@ -208,6 +209,7 @@ def print_help():
 - `/clear` — clear conversation history
 - `/model <name>` — switch model
 - `/cwd`   — print working directory
+- `/run <command>` — run a shell command directly (unsandboxed)
 
 ### Key bindings
 - **Enter** — send message
@@ -265,6 +267,12 @@ def main():
                 continue
             elif cmd == "/cwd":
                 console.print(f"[info]{CWD}[/info]")
+                continue
+            elif cmd == "/run":
+                if len(cmd_parts) > 1:
+                    subprocess.run(cmd_parts[1], shell=True, cwd=str(CWD))
+                else:
+                    console.print("[warning]Usage: /run <command>[/warning]")
                 continue
             else:
                 console.print(f"[warning]Unknown command: {cmd}[/warning]")
