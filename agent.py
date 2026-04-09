@@ -11,6 +11,7 @@ from pathlib import Path
 
 from openai import OpenAI
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
@@ -37,6 +38,50 @@ PROMPT_STYLE = Style.from_dict({
     "blue": "#0087ff",  # Bright blue
     "dim": "#555555",
 })
+
+
+# ---------------------------------------------------------------------------
+# Slash command completion
+# ---------------------------------------------------------------------------
+
+# Maps primary command names to their aliases. Only primary names are shown in completions.
+SLASH_COMMANDS = {
+    "/help": [],
+    "/quit": ["/exit", "/q"],
+    "/clear": [],
+    "/model": [],
+    "/run": [],
+}
+
+
+def get_slash_command_aliases():
+    """Return a flat dict mapping all command names (including aliases) to their primary name."""
+    aliases = {}
+    for primary, alias_list in SLASH_COMMANDS.items():
+        aliases[primary] = primary
+        for alias in alias_list:
+            aliases[alias] = primary
+    return aliases
+
+
+class SlashCommandCompleter(Completer):
+    """Provide autocompletion for slash commands when '/' is typed."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        # If text ends with space, don't complete (user moved past the command)
+        if text.endswith(" "):
+            return
+        # Get the current word being typed (after last space)
+        words = text.split()
+        if not words:
+            return
+        current_word = words[-1]
+        # Only complete if current word starts with "/"
+        if current_word.startswith("/"):
+            for cmd in SLASH_COMMANDS.keys():
+                if cmd.startswith(current_word):
+                    yield Completion(cmd, start_position=-len(current_word))
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -105,8 +150,10 @@ console = Console(
 def make_session() -> PromptSession:
     """Create a PromptSession with multi-line support.
 
-    Enter submits. Alt+Enter and Shift+Enter (kitty-protocol terminals) insert
-    a newline. Pasting multi-line text works automatically via bracketed paste.
+    Enter submits. Alt+Enter inserts a newline. Pasting multi-line text works
+    automatically via bracketed paste. Typing / shows slash command completions.
+    
+    When '/' is typed, shows slash command completions.
     """
     bindings = KeyBindings()
 
@@ -118,7 +165,11 @@ def make_session() -> PromptSession:
     def _(event):
         event.current_buffer.insert_text("\n")
 
-    return PromptSession(key_bindings=bindings, multiline=True)
+    return PromptSession(
+        key_bindings=bindings,
+        multiline=True,
+        completer=SlashCommandCompleter(),
+    )
 
 
 def make_client() -> OpenAI:
@@ -246,25 +297,29 @@ def main():
         if user_input.startswith("/"):
             cmd_parts = user_input.split(maxsplit=1)
             cmd = cmd_parts[0].lower()
+            aliases = get_slash_command_aliases()
 
-            if cmd in ("/quit", "/exit", "/q"):
+            # Resolve alias to primary command
+            primary_cmd = aliases.get(cmd)
+
+            if primary_cmd == "/quit":
                 console.print("[info]Goodbye![/info]")
                 break
-            elif cmd == "/help":
+            elif primary_cmd == "/help":
                 print_help()
                 continue
-            elif cmd == "/clear":
+            elif primary_cmd == "/clear":
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
                 console.print("[info]Conversation cleared.[/info]")
                 continue
-            elif cmd == "/model":
+            elif primary_cmd == "/model":
                 if len(cmd_parts) > 1:
                     DEFAULT_MODEL = cmd_parts[1]
                     console.print(f"[info]Model set to {DEFAULT_MODEL}[/info]")
                 else:
                     console.print(f"[info]Current model: {DEFAULT_MODEL}[/info]")
                 continue
-            elif cmd == "/run":
+            elif primary_cmd == "/run":
                 if len(cmd_parts) > 1:
                     subprocess.run(cmd_parts[1], shell=True, cwd=str(CWD))
                 else:
