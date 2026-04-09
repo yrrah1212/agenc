@@ -33,7 +33,7 @@ make run
 
 ## Features
 
-- **Interactive REPL** — conversational coding assistant in your terminal
+- **Interactive REPL** — conversational coding assistant in your terminal, with history and multi-line input (paste freely; Alt+Enter inserts a newline, Enter sends)
 - **File creation & editing** — `create_file` for new files, `edit_file` for surgical string-replacement edits, both with user confirmation
 - **Read-only sandbox** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code
 - **Git integration** — read repo state (`status`, `diff`, `log`, `blame`, ...) and make commits (`add`, `commit`)
@@ -51,6 +51,14 @@ make run
 | `/clear`       | Clear conversation history     |
 | `/model <n>`   | Switch model mid-session       |
 | `/cwd`         | Print working directory        |
+
+### Key bindings
+
+| Key            | Action                         |
+|----------------|--------------------------------|
+| Enter          | Send message                   |
+| Alt+Enter      | Insert newline                 |
+| Ctrl+C         | Cancel current input           |
 
 ## File editing
 
