@@ -208,7 +208,6 @@ def print_help():
 - `/quit`  — exit
 - `/clear` — clear conversation history
 - `/model <name>` — switch model
-- `/cwd`   — print working directory
 - `/run <command>` — run a shell command directly (unsandboxed)
 
 ### Key bindings
@@ -264,9 +263,6 @@ def main():
                     console.print(f"[info]Model set to {DEFAULT_MODEL}[/info]")
                 else:
                     console.print(f"[info]Current model: {DEFAULT_MODEL}[/info]")
-                continue
-            elif cmd == "/cwd":
-                console.print(f"[info]{CWD}[/info]")
                 continue
             elif cmd == "/run":
                 if len(cmd_parts) > 1:

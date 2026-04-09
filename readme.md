@@ -50,7 +50,7 @@ make run
 | `/quit`        | Exit the agent                 |
 | `/clear`       | Clear conversation history     |
 | `/model <n>`   | Switch model mid-session       |
-| `/cwd`         | Print working directory        |
+| `/run <cmd>`   | Run a shell command directly   |
 
 ### Key bindings
 
