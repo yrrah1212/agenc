@@ -10,6 +10,7 @@ from typing import Optional
 
 from rich.console import Console
 from rich.syntax import Syntax
+from rich.table import Table
 from rich.theme import Theme
 
 from config import AUTO_WRITE, CWD
@@ -261,17 +262,31 @@ def handle_edit_file(args: dict) -> str:
 
     console.print(f"  [tool]▸ edit: {rel_path} (line {start_line})[/tool]")
 
-    # Show diff-style preview
-    diff_parts = []
-    for line in old_lines:
-        diff_parts.append(f"- {line}")
-    for line in new_lines:
-        diff_parts.append(f"+ {line}")
-    if not new_str and old_str:
-        diff_parts.append("+ (deleted)")
+    # Side-by-side if terminal is wide enough and diff is small; else sequential
+    SIDE_BY_SIDE_MIN_WIDTH = 120
+    SIDE_BY_SIDE_MAX_LINES = 20
+    use_side_by_side = (
+        console.width >= SIDE_BY_SIDE_MIN_WIDTH
+        and max(len(old_lines), len(new_lines)) <= SIDE_BY_SIDE_MAX_LINES
+    )
 
-    diff_text = "\n".join(diff_parts)
-    console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=False))
+    if use_side_by_side:
+        col_width = (console.width - 10) // 2  # 10 for borders/padding
+        table = Table(show_header=True, box=None, padding=(0, 1))
+        table.add_column("before", style="red", width=col_width, no_wrap=True)
+        table.add_column("after", style="green", width=col_width, no_wrap=True)
+        pairs = zip(
+            old_lines + [""] * max(0, len(new_lines) - len(old_lines)),
+            new_lines + [""] * max(0, len(old_lines) - len(new_lines)),
+        )
+        for old_line, new_line in pairs:
+            table.add_row(old_line, new_line)
+        console.print(table)
+    else:
+        diff_parts = [f"- {l}" for l in old_lines] + [f"+ {l}" for l in new_lines]
+        if not new_str and old_str:
+            diff_parts.append("+ (deleted)")
+        console.print(Syntax("\n".join(diff_parts), "diff", theme="monokai", line_numbers=False))
 
     if not confirm_write("[bold]Apply edit? [y/n]:[/bold]"):
         return "User rejected the edit."
