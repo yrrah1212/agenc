@@ -67,6 +67,8 @@ If you need specific lines from the middle, use head/tail/sed to extract them.
 - Shell commands: read-only utilities (ls, cat, grep, find, head, tail, tree, rg, etc.) + git.
 - All paths must stay within the working directory.
 - If you need information, explore with bash — don't assume.
+- Only make the changes you were asked to make. Do not modify behaviour, expand permissions, \
+or refactor anything beyond the scope of the request.
 """
 
 # ---------------------------------------------------------------------------
