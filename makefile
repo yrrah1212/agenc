@@ -35,3 +35,4 @@ run: install
 
 clean:
 	rm -rf $(VENV)
+	rm -f ~/.local/bin/agenc
