@@ -113,8 +113,7 @@ def make_session() -> PromptSession:
     def _(event):
         event.current_buffer.validate_and_handle()
 
-    @bindings.add("escape", "enter")  # Alt+Enter — all terminals
-    @bindings.add("s-enter")          # Shift+Enter — kitty/WezTerm/Ghostty
+    @bindings.add("escape", "enter")  # Alt+Enter
     def _(event):
         event.current_buffer.insert_text("\n")
 
@@ -212,7 +211,7 @@ def print_help():
 
 ### Key bindings
 - **Enter** — send message
-- **Alt+Enter** / **Shift+Enter** — insert newline
+- **Alt+Enter** — insert newline
 - Pasting multi-line text works without any special mode
 """
         )
