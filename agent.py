@@ -6,10 +6,13 @@ It explores your repo with sandboxed shell commands and gives you feedback on yo
 """
 
 import json
-import readline  # noqa: F401  — importing enables arrow-key history in input()
 from pathlib import Path
 
 from openai import OpenAI
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -24,6 +27,15 @@ from tools import (
     handle_create_file,
     handle_edit_file,
 )
+
+# ---------------------------------------------------------------------------
+# Prompt styling
+# ---------------------------------------------------------------------------
+
+PROMPT_STYLE = Style.from_dict({
+    "blue": "#0087ff",  # Bright blue
+    "dim": "#555555",
+})
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -70,6 +82,8 @@ If you need specific lines from the middle, use head/tail/sed to extract them.
 - If you need information, explore with bash — don't assume.
 - Only make the changes you were asked to make. Do not modify behaviour, expand permissions, \
 or refactor anything beyond the scope of the request.
+- Prefer simple, direct solutions. Avoid unnecessary abstractions, modes, or indirection. \
+The right amount of code is the minimum that correctly solves the problem.
 """
 
 # ---------------------------------------------------------------------------
@@ -85,6 +99,26 @@ console = Console(
         }
     )
 )
+
+
+def make_session() -> PromptSession:
+    """Create a PromptSession with multi-line support.
+
+    Enter submits. Alt+Enter and Shift+Enter (kitty-protocol terminals) insert
+    a newline. Pasting multi-line text works automatically via bracketed paste.
+    """
+    bindings = KeyBindings()
+
+    @bindings.add("enter")
+    def _(event):
+        event.current_buffer.validate_and_handle()
+
+    @bindings.add("escape", "enter")  # Alt+Enter — all terminals
+    @bindings.add("s-enter")          # Shift+Enter — kitty/WezTerm/Ghostty
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    return PromptSession(key_bindings=bindings, multiline=True)
 
 
 def make_client() -> OpenAI:
@@ -175,7 +209,11 @@ def print_help():
 - `/clear` — clear conversation history
 - `/model <name>` — switch model
 - `/cwd`   — print working directory
-- `/paste` — enter multi-line input mode (end with three double-quotes on its own line)
+
+### Key bindings
+- **Enter** — send message
+- **Alt+Enter** / **Shift+Enter** — insert newline
+- Pasting multi-line text works without any special mode
 """
         )
     )
@@ -188,11 +226,16 @@ def main():
     client = make_client()
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    session = make_session()
+    prompt = HTML("<b><blue>you</blue></b> > ")
 
     while True:
         try:
-            user_input = console.input("[bold blue]you >[/bold blue] ").strip()
-        except (EOFError, KeyboardInterrupt):
+            user_input = session.prompt(prompt, style=PROMPT_STYLE).strip()
+        except KeyboardInterrupt:
+            console.print("\n[info]Input cancelled.[/info]")
+            continue
+        except EOFError:
             console.print("\n[info]Goodbye![/info]")
             break
 
@@ -224,21 +267,6 @@ def main():
             elif cmd == "/cwd":
                 console.print(f"[info]{CWD}[/info]")
                 continue
-            elif cmd == "/paste":
-                sentinel = '"""'
-                console.print(f'[info]Multi-line mode — paste your text, then type {sentinel} on its own line to send.[/info]')
-                lines = []
-                while True:
-                    try:
-                        line = console.input("")
-                    except (EOFError, KeyboardInterrupt):
-                        break
-                    if line.strip() == sentinel:
-                        break
-                    lines.append(line)
-                user_input = "\n".join(lines).strip()
-                if not user_input:
-                    continue
             else:
                 console.print(f"[warning]Unknown command: {cmd}[/warning]")
                 continue
