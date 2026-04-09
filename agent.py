@@ -174,6 +174,7 @@ def print_help():
 - `/clear` — clear conversation history
 - `/model <name>` — switch model
 - `/cwd`   — print working directory
+- `/paste` — enter multi-line input mode (end with three double-quotes on its own line)
 """
         )
     )
@@ -222,6 +223,21 @@ def main():
             elif cmd == "/cwd":
                 console.print(f"[info]{CWD}[/info]")
                 continue
+            elif cmd == "/paste":
+                sentinel = '"""'
+                console.print(f'[info]Multi-line mode — paste your text, then type {sentinel} on its own line to send.[/info]')
+                lines = []
+                while True:
+                    try:
+                        line = console.input("")
+                    except (EOFError, KeyboardInterrupt):
+                        break
+                    if line.strip() == sentinel:
+                        break
+                    lines.append(line)
+                user_input = "\n".join(lines).strip()
+                if not user_input:
+                    continue
             else:
                 console.print(f"[warning]Unknown command: {cmd}[/warning]")
                 continue
