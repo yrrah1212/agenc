@@ -100,9 +100,9 @@ The agent can interact with git at the subcommand level:
 
 The agent can read from GitHub using the `gh` CLI (must be installed separately):
 
-**Allowed:** `gh issue list`, `gh issue view`, `gh issue status`, `gh pr list`, `gh pr view`, `gh pr status`, `gh pr checks`, `gh pr diff`, `gh repo view`, `gh repo list`, `gh help`, `gh version`
+**Allowed:** `gh issue list/view/status`, `gh pr list/view/status/checks/diff`, `gh repo list/view`, `gh help`, `gh version`
 
-**Blocked:** `create`, `edit`, `close`, `reopen`, `delete`, `merge`, `checkout`, `convert`, `sync`, and any command with `--body`, `--title`, or `-d`/`--delete` flags.
+**Blocked:** `create`, `edit`, `close`, `reopen`, `delete`, `merge`, `checkout`, `convert`, `sync`, `ready`, `develop`, and any command with `--body`, `--title`, or `-d`/`--delete` flags.
 
 ## Output compression
 

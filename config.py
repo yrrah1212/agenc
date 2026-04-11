@@ -133,24 +133,12 @@ BLOCKED_GIT_PATTERNS = re.compile(
 # GitHub CLI (gh) subcommand allow-list
 # ---------------------------------------------------------------------------
 
-# Safe gh subcommands grouped by topic.
-ALLOWED_GH_TOPIC_COMMANDS = {
-    # Topic-only commands show help/listing
-    "help",
-    "version",
-    "status",
-    "api",          # generic API calls (user must know what they're doing)
-    # Repo
-    "repo",
-    # Issues
-    "issue",
-    # Pull requests
-    "pr",
-}
-
-# Safe gh <topic> <action> combinations.
+# Safe gh <topic> <action> combinations (read-only).
 ALLOWED_GH_ACTIONS = frozenset(
     {
+        # Help/version (topic-only or with subcommands)
+        ("help",),
+        ("version",),
         # Repo: listing/viewing
         ("repo", "view"),
         ("repo", "list"),
@@ -158,14 +146,12 @@ ALLOWED_GH_ACTIONS = frozenset(
         ("issue", "list"),
         ("issue", "view"),
         ("issue", "status"),
-        ("issue", "develop"),
         # PRs: read-only operations
         ("pr", "list"),
         ("pr", "view"),
         ("pr", "status"),
         ("pr", "checks"),
         ("pr", "diff"),
-        ("pr", "ready"),  # mark as ready from draft (debatable, but low risk)
     }
 )
 

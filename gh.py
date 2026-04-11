@@ -7,7 +7,7 @@ dangerous write operations.
 
 from typing import Optional
 
-from config import ALLOWED_GH_ACTIONS, ALLOWED_GH_TOPIC_COMMANDS, BLOCKED_GH_PATTERNS
+from config import ALLOWED_GH_ACTIONS, BLOCKED_GH_PATTERNS
 
 
 def validate_gh_command(parts: list[str]) -> Optional[str]:
@@ -20,12 +20,12 @@ def validate_gh_command(parts: list[str]) -> Optional[str]:
     if BLOCKED_GH_PATTERNS.search(full_args):
         return "Blocked: gh command contains a forbidden action or flag."
 
-    # Find the topic and action (e.g. gh issue list → topic=issue, action=list)
+    # Extract topic and action (e.g. gh issue list → topic=issue, action=list)
     args = parts[1:]
     topic = None
     action = None
     
-    for i, arg in enumerate(args):
+    for arg in args:
         if arg.startswith("-"):
             continue  # skip flags
         if topic is None:
@@ -34,20 +34,20 @@ def validate_gh_command(parts: list[str]) -> Optional[str]:
             action = arg
             break
     
-    # Topic-only commands (e.g. gh issue, gh pr) are allowed
     if topic is None:
         return "Blocked: gh command with no topic."
     
-    if topic in ALLOWED_GH_TOPIC_COMMANDS and action is None:
+    # Build command tuple and check against allow-list
+    if action:
+        cmd_tuple = (topic, action)
+    else:
+        cmd_tuple = (topic,)
+    
+    if cmd_tuple in ALLOWED_GH_ACTIONS:
         return None
     
-    # Check if the topic-action combination is allowed
-    if action is not None:
-        if (topic, action) in ALLOWED_GH_ACTIONS:
-            return None
-        # Also allow if topic alone is in topic commands but action is not explicitly blocked
-        # This is permissive for safe subcommands
-        if topic in {"help", "version", "status", "api"}:
-            return None
-    
-    return f"Blocked: 'gh {topic} {action}' is not in the allow-list."
+    # Format error message correctly for topic-only or topic+action
+    if action:
+        return f"Blocked: 'gh {topic} {action}' is not in the allow-list."
+    else:
+        return f"Blocked: 'gh {topic}' is not in the allow-list."
