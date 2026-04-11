@@ -122,7 +122,10 @@ BLOCKED_GIT_PATTERNS = re.compile(
     ( --force
     | --hard
     | --delete
-    | -[dD]\b          # branch -d / -D
+    | -[dD]\b          # branch -d / -D (delete)
+    | -[mM]\b          # branch -m / -M (rename)
+    | --move
+    | --copy
     | --mirror
     | --bare
     | --no-verify      # skip commit hooks — suspicious
