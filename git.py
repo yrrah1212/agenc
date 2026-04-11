@@ -48,4 +48,15 @@ def validate_git_command(parts: list[str]) -> Optional[str]:
         if stash_action not in ("list", "show"):
             return f"Blocked: 'git stash {stash_action}' is not allowed. Only 'git stash list' and 'git stash show'."
 
+    # Special case: 'checkout' is only allowed with -b flag (creating new branches)
+    if subcmd == "checkout":
+        # Find -b flag and its value
+        has_new_branch = False
+        for j, arg in enumerate(args):
+            if arg == "-b" and j + 1 < len(args):
+                has_new_branch = True
+                break
+        if not has_new_branch:
+            return "Blocked: 'git checkout' without -b is not allowed. Use 'git checkout -b <new-branch>' to create a feature branch."
+
     return None

@@ -111,6 +111,8 @@ ALLOWED_GIT_SUBCOMMANDS = frozenset(
         # Making commits
         "add",
         "commit",
+        # Creating feature branches
+        "checkout",   # only with -b flag (validated in git.py)
     }
 )
 
