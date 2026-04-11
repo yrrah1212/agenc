@@ -5,12 +5,14 @@ This module defines the OpenAI function-calling schema and implements
 handlers for bash, create_file, and edit_file tools.
 """
 
+import difflib
 from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 from rich.theme import Theme
 
 from config import AUTO_WRITE, CWD
@@ -170,6 +172,42 @@ def confirm_write(prompt_text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Diff helpers
+# ---------------------------------------------------------------------------
+
+
+def highlight_word_diff(old_line: str, new_line: str) -> tuple[Text, Text]:
+    """
+    Compare two lines and return Rich Text objects with word-level highlighting.
+    
+    Uses difflib.SequenceMatcher to find character-level changes:
+    - Unchanged text: normal color
+    - Deleted text: red strikethrough
+    - Added text: green bold
+    """
+    if old_line == new_line:
+        return Text(old_line), Text(new_line)
+    
+    matcher = difflib.SequenceMatcher(None, old_line, new_line)
+    old_result = Text()
+    new_result = Text()
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            old_result.append(old_line[i1:i2])
+            new_result.append(new_line[j1:j2])
+        elif tag == 'delete':
+            old_result.append(old_line[i1:i2], style="strike red")
+        elif tag == 'insert':
+            new_result.append(new_line[j1:j2], style="bold green")
+        elif tag == 'replace':
+            old_result.append(old_line[i1:i2], style="strike red")
+            new_result.append(new_line[j1:j2], style="bold green")
+    
+    return old_result, new_result
+
+
+# ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
 
@@ -262,31 +300,45 @@ def handle_edit_file(args: dict) -> str:
 
     console.print(f"  [tool]▸ edit: {rel_path} (line {start_line})[/tool]")
 
-    # Side-by-side if terminal is wide enough and diff is small; else sequential
-    SIDE_BY_SIDE_MIN_WIDTH = 120
-    SIDE_BY_SIDE_MAX_LINES = 20
+    # Use word-level highlighting with side-by-side view
+    SIDE_BY_SIDE_MIN_WIDTH = 100
+    SIDE_BY_SIDE_MAX_LINES = 30
     use_side_by_side = (
         console.width >= SIDE_BY_SIDE_MIN_WIDTH
         and max(len(old_lines), len(new_lines)) <= SIDE_BY_SIDE_MAX_LINES
     )
 
     if use_side_by_side:
-        col_width = (console.width - 10) // 2  # 10 for borders/padding
+        col_width = (console.width - 12) // 2  # 12 for borders/padding
         table = Table(show_header=True, box=None, padding=(0, 1))
-        table.add_column("before", style="red", width=col_width, no_wrap=True)
-        table.add_column("after", style="green", width=col_width, no_wrap=True)
+        table.add_column("before", width=col_width, no_wrap=True)
+        table.add_column("after", width=col_width, no_wrap=True)
         pairs = zip(
             old_lines + [""] * max(0, len(new_lines) - len(old_lines)),
             new_lines + [""] * max(0, len(old_lines) - len(new_lines)),
         )
         for old_line, new_line in pairs:
-            table.add_row(old_line, new_line)
+            old_text, new_text = highlight_word_diff(old_line, new_line)
+            table.add_row(old_text, new_text)
         console.print(table)
     else:
-        diff_parts = [f"- {l}" for l in old_lines] + [f"+ {l}" for l in new_lines]
+        # Sequential view with word-level highlighting
+        for old_line, new_line in zip(old_lines, new_lines):
+            if old_line == new_line:
+                console.print(f"  {old_line}")
+            else:
+                old_text, new_text = highlight_word_diff(old_line, new_line)
+                console.print(Text.assemble(("  - ", "red"), old_text))
+                console.print(Text.assemble(("  + ", "green"), new_text))
+        # Handle length mismatch
+        if len(old_lines) > len(new_lines):
+            for old_line in old_lines[len(new_lines):]:
+                console.print(Text.assemble(("  - ", "red"), Text(old_line, style="strike red")))
+        elif len(new_lines) > len(old_lines):
+            for new_line in new_lines[len(old_lines):]:
+                console.print(Text.assemble(("  + ", "green"), Text(new_line, style="bold green")))
         if not new_str and old_str:
-            diff_parts.append("+ (deleted)")
-        console.print(Syntax("\n".join(diff_parts), "diff", theme="monokai", line_numbers=False))
+            console.print("  [green]+ (deleted)[/green]")
 
     if not confirm_write("[bold]Apply edit? [y/n]:[/bold]"):
         return "User rejected the edit."
