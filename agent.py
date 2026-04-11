@@ -7,6 +7,7 @@ It explores your repo with sandboxed shell commands and gives you feedback on yo
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai import OpenAI
@@ -40,6 +41,19 @@ PROMPT_STYLE = Style.from_dict({
 })
 
 
+@dataclass
+class TokenUsage:
+    """Tracks cumulative token usage for a session."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+    def add(self, prompt: int, completion: int, total: int):
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.total_tokens += total
+
+
 # ---------------------------------------------------------------------------
 # Slash command completion
 # ---------------------------------------------------------------------------
@@ -51,6 +65,7 @@ SLASH_COMMANDS = {
     "/clear": [],
     "/model": [],
     "/run": [],
+    "/tokens": ["/usage"],
 }
 
 
@@ -184,8 +199,13 @@ def make_client() -> OpenAI:
     return OpenAI(base_url=DEFAULT_BASE_URL, api_key=API_KEY or "unused")
 
 
-def chat_turn(client: OpenAI, messages: list, model: str) -> str:
-    """Run one turn of the agentic loop: call the model, execute any tool calls, repeat."""
+def chat_turn(client: OpenAI, messages: list, model: str) -> tuple[str, TokenUsage]:
+    """Run one turn of the agentic loop: call the model, execute any tool calls, repeat.
+    
+    Returns: (reply_text, token_usage_for_this_turn)
+    """
+    turn_usage = TokenUsage()
+    
     while True:
         response = client.chat.completions.create(
             model=model,
@@ -194,6 +214,14 @@ def chat_turn(client: OpenAI, messages: list, model: str) -> str:
             tool_choice="auto",
         )
 
+        # Track token usage
+        if response.usage:
+            turn_usage.add(
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                response.usage.total_tokens
+            )
+
         msg = response.choices[0].message
 
         # Append the assistant message to history
@@ -201,7 +229,7 @@ def chat_turn(client: OpenAI, messages: list, model: str) -> str:
 
         # If no tool calls, we're done — return the text
         if not msg.tool_calls:
-            return msg.content or ""
+            return msg.content or "", turn_usage
 
         # Process each tool call
         for tc in msg.tool_calls:
@@ -264,11 +292,28 @@ def print_help():
 - `/clear` — clear conversation history
 - `/model <name>` — switch model
 - `/run <command>` — run a shell command directly (unsandboxed)
+- `/tokens` — show token usage for this session
 
 ### Key bindings
 - **Enter** — send message
 - **Alt+Enter** — insert newline
 - Pasting multi-line text works without any special mode
+"""
+        )
+    )
+
+
+def print_tokens(usage: TokenUsage):
+    """Display session token usage."""
+    console.print(
+        Markdown(
+            f"""\
+### Token Usage (session)
+| Type | Count |
+|------|-------|
+| Prompt | {usage.prompt_tokens:,} |
+| Completion | {usage.completion_tokens:,} |
+| **Total** | **{usage.total_tokens:,}** |
 """
         )
     )
@@ -281,6 +326,7 @@ def main():
     client = make_client()
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    usage = TokenUsage()
     session = make_session()
     prompt = HTML("<b><blue>you</blue></b> > ")
 
@@ -314,6 +360,7 @@ def main():
                 continue
             elif primary_cmd == "/clear":
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                usage = TokenUsage()
                 console.print("[info]Conversation cleared.[/info]")
                 continue
             elif primary_cmd == "/model":
@@ -329,6 +376,9 @@ def main():
                 else:
                     console.print("[warning]Usage: /run <command>[/warning]")
                 continue
+            elif primary_cmd == "/tokens":
+                print_tokens(usage)
+                continue
             else:
                 console.print(f"[warning]Unknown command: {cmd}[/warning]")
                 continue
@@ -337,7 +387,12 @@ def main():
 
         try:
             console.print()  # breathing room
-            reply = chat_turn(client, messages, DEFAULT_MODEL)
+            reply, turn_usage = chat_turn(client, messages, DEFAULT_MODEL)
+            usage.add(
+                turn_usage.prompt_tokens,
+                turn_usage.completion_tokens,
+                turn_usage.total_tokens
+            )
             console.print()
             console.print(Markdown(reply))
             console.print()

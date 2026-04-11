@@ -44,13 +44,14 @@ make run
 
 ## REPL commands
 
-| Command        | Description                    |
-|----------------|--------------------------------|
-| `/help`        | Show available commands        |
-| `/quit`        | Exit the agent                 |
-| `/clear`       | Clear conversation history     |
-| `/model <n>`   | Switch model mid-session       |
-| `/run <cmd>`   | Run a shell command directly   |
+| Command          | Description                    |
+|------------------|--------------------------------|
+| `/help`          | Show available commands        |
+| `/quit`          | Exit the agent                 |
+| `/clear`         | Clear conversation history     |
+| `/model <n>`     | Switch model mid-session       |
+| `/run <cmd>`     | Run a shell command directly   |
+| `/tokens`        | Show session token usage       |
 
 ### Key bindings
 
