@@ -18,6 +18,7 @@ from config import (
     MAX_OUTPUT_BYTES,
 )
 from git import validate_git_command
+from gh import validate_gh_command
 
 # ---------------------------------------------------------------------------
 # Working directory jail
@@ -49,6 +50,10 @@ def validate_command(cmd_str: str) -> Optional[str]:
         # Git gets its own subcommand-level validation
         if base_cmd == "git":
             error = validate_git_command(parts)
+            if error:
+                return error
+        elif base_cmd == "gh":
+            error = validate_gh_command(parts)
             if error:
                 return error
         elif base_cmd not in ALLOWED_COMMANDS:

@@ -37,6 +37,7 @@ make run
 - **File creation & editing** — `create_file` for new files, `edit_file` for surgical string-replacement edits, both with user confirmation
 - **Sandboxed shell** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code; destructive commands are blocked
 - **Git integration** — read repo state (`status`, `diff`, `log`, `blame`, ...) and make commits (`add`, `commit`)
+- **GitHub CLI** — read issues and PRs with `gh` (read-only allow-list)
 - **Smart output compression** — successful commands are summarized to save context; failures preserve full detail
 - **Path jailing** — all file access is restricted to the current working directory
 - **Any OpenAI-compatible endpoint** — works with OpenAI, Ollama, OpenRouter, llama.cpp, vLLM, etc.
@@ -94,6 +95,14 @@ The agent can interact with git at the subcommand level:
 **Allowed (write):** `add`, `commit`
 
 **Blocked:** `push`, `pull`, `fetch`, `reset`, `rebase`, `cherry-pick`, `merge`, `checkout`, `switch`, `clean`, `rm`, `restore`, and any other subcommand not in the allow-list. The flags `--force`, `--hard`, `--delete`, `-d`/`-D`, `--mirror`, `--bare`, and `--no-verify` are also blocked globally.
+
+## GitHub CLI support
+
+The agent can read from GitHub using the `gh` CLI (must be installed separately):
+
+**Allowed:** `gh issue list`, `gh issue view`, `gh issue status`, `gh pr list`, `gh pr view`, `gh pr status`, `gh pr checks`, `gh pr diff`, `gh repo view`, `gh repo list`, `gh help`, `gh version`
+
+**Blocked:** `create`, `edit`, `close`, `reopen`, `delete`, `merge`, `checkout`, `convert`, `sync`, and any command with `--body`, `--title`, or `-d`/`--delete` flags.
 
 ## Output compression
 

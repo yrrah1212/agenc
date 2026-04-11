@@ -129,6 +129,70 @@ BLOCKED_GIT_PATTERNS = re.compile(
     re.VERBOSE,
 )
 
+# ---------------------------------------------------------------------------
+# GitHub CLI (gh) subcommand allow-list
+# ---------------------------------------------------------------------------
+
+# Safe gh subcommands grouped by topic.
+ALLOWED_GH_TOPIC_COMMANDS = {
+    # Topic-only commands show help/listing
+    "help",
+    "version",
+    "status",
+    "api",          # generic API calls (user must know what they're doing)
+    # Repo
+    "repo",
+    # Issues
+    "issue",
+    # Pull requests
+    "pr",
+}
+
+# Safe gh <topic> <action> combinations.
+ALLOWED_GH_ACTIONS = frozenset(
+    {
+        # Repo: listing/viewing
+        ("repo", "view"),
+        ("repo", "list"),
+        # Issues: read-only operations
+        ("issue", "list"),
+        ("issue", "view"),
+        ("issue", "status"),
+        ("issue", "develop"),
+        # PRs: read-only operations
+        ("pr", "list"),
+        ("pr", "view"),
+        ("pr", "status"),
+        ("pr", "checks"),
+        ("pr", "diff"),
+        ("pr", "ready"),  # mark as ready from draft (debatable, but low risk)
+    }
+)
+
+# gh flags/arguments that should never appear.
+BLOCKED_GH_PATTERNS = re.compile(
+    r"""
+    ( \bcreate\b
+    | \bedit\b
+    | \bclose\b
+    | \breopen\b
+    | \bdelete\b
+    | \bmerge\b
+    | \bcheckout\b
+    | \bconvert\b
+    | \bsync\b
+    | \btransfer\b
+    | \barchive\b
+    | \bunarchive\b
+    | --body
+    | --title
+    | -d\b          # delete flag
+    | --delete
+    )
+    """,
+    re.VERBOSE,
+)
+
 # Output compression threshold
 MAX_OUTPUT_BYTES = 100_000  # truncate huge command outputs
 
@@ -148,6 +212,7 @@ CONTENT_COMMANDS = frozenset(
         "hexdump",
         "xxd",
         "bat",
+        "gh",
     }
 )
 
