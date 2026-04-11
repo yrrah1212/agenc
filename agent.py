@@ -64,6 +64,7 @@ SLASH_COMMANDS = {
     "/quit": ["/exit", "/q"],
     "/clear": [],
     "/model": [],
+    "/models": [],
     "/run": [],
     "/tokens": ["/usage"],
 }
@@ -80,23 +81,70 @@ def get_slash_command_aliases():
 
 
 class SlashCommandCompleter(Completer):
-    """Provide autocompletion for slash commands when '/' is typed."""
+    """Provide autocompletion for slash commands and model names."""
+
+    def __init__(self, client=None):
+        self.client = client
+        self._model_cache = None
+
+    def _get_models(self):
+        """Fetch and cache available model names."""
+        if self._model_cache is not None:
+            return self._model_cache
+        if self.client is None:
+            return []
+        try:
+            models = self.client.models.list()
+            self._model_cache = [m.id for m in models.data]
+            return self._model_cache
+        except Exception:
+            return []
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
-        # If text ends with space, don't complete (user moved past the command)
+        words = text.split()
+        
+        # Model name completion after '/model ' (check before split() loses the space)
+        if text.rstrip().endswith("/model") and text.endswith(" "):
+            # User typed "/model " and is looking for model names
+            models = self._get_models()
+            for model in models:
+                yield Completion(model, start_position=0)
+            return
+        
+        # Model name completion when typing "/model <partial>"
+        if len(words) >= 2 and words[-2] == "/model" and not words[-1].startswith("/"):
+            models = self._get_models()
+            current_word = words[-1]
+            for model in models:
+                if model.startswith(current_word):
+                    yield Completion(model, start_position=-len(current_word))
+            return
+
+        # If text ends with space, don't complete slash commands
         if text.endswith(" "):
             return
-        # Get the current word being typed (after last space)
-        words = text.split()
-        if not words:
-            return
-        current_word = words[-1]
-        # Only complete if current word starts with "/"
-        if current_word.startswith("/"):
+
+        # Slash command completion
+        if words and words[-1].startswith("/"):
+            current_word = words[-1]
             for cmd in SLASH_COMMANDS.keys():
                 if cmd.startswith(current_word):
                     yield Completion(cmd, start_position=-len(current_word))
+
+# ---------------------------------------------------------------------------
+# Fetch available models
+# ---------------------------------------------------------------------------
+
+def get_available_models(client: OpenAI) -> list:
+    """Fetch available model names from the API."""
+    try:
+        models = client.models.list()
+        return [m.id for m in models.data]
+    except Exception as e:
+        console.print(f"[warning]Failed to fetch models: {e}[/warning]")
+        return []
+
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -172,13 +220,12 @@ console = Console(
 )
 
 
-def make_session() -> PromptSession:
+def make_session(client: OpenAI = None) -> PromptSession:
     """Create a PromptSession with multi-line support.
 
     Enter submits. Alt+Enter inserts a newline. Pasting multi-line text works
     automatically via bracketed paste. Typing / shows slash command completions.
-    
-    When '/' is typed, shows slash command completions.
+    After '/model ' shows model name completions.
     """
     bindings = KeyBindings()
 
@@ -193,7 +240,7 @@ def make_session() -> PromptSession:
     return PromptSession(
         key_bindings=bindings,
         multiline=True,
-        completer=SlashCommandCompleter(),
+        completer=SlashCommandCompleter(client),
     )
 
 
@@ -296,7 +343,8 @@ def print_help():
 - `/help`  — show this message
 - `/quit`  — exit
 - `/clear` — clear conversation history
-- `/model <name>` — switch model
+- `/model <name>` — switch model (tab-complete model names)
+- `/models` — list available models
 - `/run <command>` — run a shell command directly (unsandboxed)
 - `/tokens` — show token usage for this session
 
@@ -333,7 +381,7 @@ def main():
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     usage = TokenUsage()
-    session = make_session()
+    session = make_session(client)
     prompt = HTML("<b><blue>you</blue></b> > ")
 
     while True:
@@ -374,7 +422,19 @@ def main():
                     DEFAULT_MODEL = cmd_parts[1]
                     console.print(f"[info]Model set to {DEFAULT_MODEL}[/info]")
                 else:
-                    console.print(f"[info]Current model: {DEFAULT_MODEL}[/info]")
+                    console.print(Markdown(f"**Current model:** `{DEFAULT_MODEL}`\n\nUsage: `/model <name>` — switch to a different model. Press Tab after `/model ` to browse available models."))
+                continue
+            elif primary_cmd == "/models":
+                models = get_available_models(client)
+                if models:
+                    current = DEFAULT_MODEL
+                    model_list = "\n".join(
+                        f"  * {m}" if m == current else f"  {m}"
+                        for m in sorted(models)
+                    )
+                    console.print(f"[info]Available models ({len(models)}):\n{model_list}[/info]")
+                else:
+                    console.print("[warning]No models available (check API connection)[/warning]")
                 continue
             elif primary_cmd == "/run":
                 if len(cmd_parts) > 1:

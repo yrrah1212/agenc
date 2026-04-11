@@ -50,7 +50,8 @@ make run
 | `/help`          | Show available commands        |
 | `/quit`          | Exit the agent                 |
 | `/clear`         | Clear conversation history     |
-| `/model <n>`     | Switch model mid-session       |
+| `/model <n>`     | Switch model (tab-complete)    |
+| `/models`        | List available models          |
 | `/run <cmd>`     | Run a shell command directly   |
 | `/tokens`        | Show session token usage       |
 
