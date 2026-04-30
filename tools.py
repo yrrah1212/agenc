@@ -2,10 +2,12 @@
 agenc — tool definitions and handlers.
 
 This module defines the OpenAI function-calling schema and implements
-handlers for bash, create_file, and edit_file tools.
+handlers for all tools. No shell execution — each tool is a specific,
+safe operation.
 """
 
 import difflib
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -15,8 +17,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from config import AUTO_WRITE, CWD
-from sandbox import run_shell
+from config import AUTO_WRITE, CWD, MAX_FILE_BYTES, MAX_READ_LINES
 
 # ---------------------------------------------------------------------------
 # Console setup
@@ -41,24 +42,125 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "bash",
+            "name": "list_files",
             "description": (
-                "Run a shell command to explore and interact with the repository. "
-                "Read commands: ls, cat, head, tail, grep, find, wc, tree, diff, rg, fd, etc. "
-                "Git commands: git status, git diff, git log, git show, git blame, git add, git commit, etc. "
-                "Destructive git operations (reset, push, rebase, cherry-pick, merge, checkout, etc.) are blocked. "
-                "All paths must stay within the current working directory. "
-                "Do NOT use bash to write files — use create_file or edit_file instead."
+                "List files and directories. "
+                "Use `path` to specify a directory (default: '.'). "
+                "Set `recursive=True` to list all files recursively. "
+                "Set `all=True` to include hidden files (dotfiles)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {
+                    "path": {
                         "type": "string",
-                        "description": "The shell command to execute.",
-                    }
+                        "description": "Directory path relative to working directory. Default: '.'",
+                        "default": ".",
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "Include hidden files (dotfiles). Default: false",
+                        "default": False,
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "List recursively. Default: false",
+                        "default": False,
+                    },
                 },
-                "required": ["command"],
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": (
+                "Search for files by name pattern (glob-style). "
+                "Use `pattern` like '*.py' or 'test_*'. "
+                "Use `path` to specify the root directory (default: '.')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Root directory for search. Default: '.'",
+                        "default": ".",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match file names, e.g. '*.py', 'test_*'",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_text",
+            "description": (
+                "Search for text within file contents. "
+                "Returns matching lines with file paths and line numbers. "
+                "Use `pattern` for the text/regex to search. "
+                "Use `include` to filter by file pattern (e.g. '*.py'). "
+                "Use `path` to specify root directory (default: '.')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Root directory for search. Default: '.'",
+                        "default": ".",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text or regex pattern to search for",
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "File glob pattern to filter which files to search, e.g. '*.py'",
+                        "default": "*",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read file contents. "
+                "Use `path` for the file path. "
+                "Use `offset` to start reading from a specific line (1-indexed, default: 1). "
+                "Use `limit` to restrict the number of lines read (default: 2000). "
+                "Files larger than 1MB are rejected."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to working directory",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Starting line number (1-indexed). Default: 1",
+                        "default": 1,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum lines to read. Default: 2000",
+                        "default": MAX_READ_LINES,
+                    },
+                },
+                "required": ["path"],
             },
         },
     },
@@ -67,7 +169,7 @@ TOOLS = [
         "function": {
             "name": "create_file",
             "description": (
-                "Create a new file or overwrite an existing file. "
+                "Create a new file or overwrite an existing one. "
                 "Use this to write new files from scratch. "
                 "The user will be shown the content and asked to approve before writing. "
                 "All paths must be within the working directory."
@@ -95,7 +197,7 @@ TOOLS = [
             "description": (
                 "Edit an existing file by replacing a specific string with new content. "
                 "old_str must match exactly one location in the file. "
-                "Always read the file first with bash (cat) to get the exact text to replace. "
+                "Always read the file first with read_file to get the exact text to replace. "
                 "The user will be shown a diff preview and asked to approve. "
                 "For large changes, prefer create_file to rewrite the whole file."
             ),
@@ -123,21 +225,46 @@ TOOLS = [
 
 
 # ---------------------------------------------------------------------------
-# Helper functions
+# Path validation helpers
 # ---------------------------------------------------------------------------
 
 
 def validate_file_path(path_str: str) -> tuple[Optional[Path], Optional[str]]:
-    """Validate and resolve a file path.  Returns (resolved_path, error_msg)."""
+    """Validate and resolve a file path. Returns (resolved_path, error_msg)."""
     if not path_str or not path_str.strip():
         return None, "Path is empty."
     try:
         resolved = (CWD / path_str).resolve()
     except (OSError, ValueError) as exc:
         return None, f"Invalid path: {exc}"
-    if not str(resolved).startswith(str(CWD) + "/") and resolved != CWD:
+    # Check path is within CWD
+    try:
+        resolved.relative_to(CWD)
+    except ValueError:
         return None, f"Path '{path_str}' resolves outside the working directory."
     return resolved, None
+
+
+def validate_dir_path(path_str: str) -> tuple[Optional[Path], Optional[str]]:
+    """Validate and resolve a directory path. Returns (resolved_path, error_msg)."""
+    if not path_str or not path_str.strip():
+        return None, "Path is empty."
+    try:
+        resolved = (CWD / path_str).resolve()
+    except (OSError, ValueError) as exc:
+        return None, f"Invalid path: {exc}"
+    try:
+        resolved.relative_to(CWD)
+    except ValueError:
+        return None, f"Path '{path_str}' resolves outside the working directory."
+    if not resolved.is_dir():
+        return None, f"Not a directory: {path_str}"
+    return resolved, None
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
 
 
 def guess_lexer(path: Path) -> str:
@@ -159,7 +286,7 @@ def guess_lexer(path: Path) -> str:
 
 
 def confirm_write(prompt_text: str) -> bool:
-    """Ask the user to confirm a file write.  Returns True if approved."""
+    """Ask the user to confirm a file write. Returns True if approved."""
     if AUTO_WRITE:
         console.print("  [info]auto-approved (AGENC_AUTO_WRITE=1)[/info]")
         return True
@@ -171,20 +298,8 @@ def confirm_write(prompt_text: str) -> bool:
     return response in ("y", "yes")
 
 
-# ---------------------------------------------------------------------------
-# Diff helpers
-# ---------------------------------------------------------------------------
-
-
 def highlight_word_diff(old_line: str, new_line: str) -> tuple[Text, Text]:
-    """
-    Compare two lines and return Rich Text objects with word-level highlighting.
-    
-    Uses difflib.SequenceMatcher to find character-level changes:
-    - Unchanged text: normal color
-    - Deleted text: red strikethrough
-    - Added text: green bold
-    """
+    """Compare two lines and return Rich Text with word-level highlighting."""
     if old_line == new_line:
         return Text(old_line), Text(new_line)
     
@@ -212,15 +327,163 @@ def highlight_word_diff(old_line: str, new_line: str) -> tuple[Text, Text]:
 # ---------------------------------------------------------------------------
 
 
-def handle_bash(args: dict) -> tuple[str, dict]:
-    """Handle the bash tool call.  Returns (display_string, result_dict)."""
-    cmd = args.get("command", "")
-    result = run_shell(cmd)
-    return cmd, result
+def handle_list_files(args: dict) -> str:
+    """Handle the list_files tool call. Returns a formatted directory listing."""
+    path_str = args.get("path", ".")
+    show_all = args.get("all", False)
+    recursive = args.get("recursive", False)
+
+    resolved, error = validate_dir_path(path_str)
+    if error:
+        return f"Error: {error}"
+
+    try:
+        if recursive:
+            entries = sorted(resolved.rglob("*"))
+        else:
+            entries = sorted(resolved.iterdir())
+    except PermissionError as exc:
+        return f"Error: Permission denied: {exc}"
+
+    if not show_all:
+        entries = [e for e in entries if not e.name.startswith(".")]
+
+    lines = []
+    for entry in entries:
+        try:
+            rel = entry.relative_to(CWD)
+        except ValueError:
+            rel = entry
+        prefix = "📁 " if entry.is_dir() else "📄 "
+        lines.append(f"{prefix}{rel}")
+
+    if not lines:
+        return "(empty directory)"
+
+    return "\n".join(lines)
+
+
+def handle_search_files(args: dict) -> str:
+    """Handle the search_files tool call. Returns matching file paths."""
+    pattern = args.get("pattern", "")
+    path_str = args.get("path", ".")
+
+    if not pattern:
+        return "Error: pattern is required."
+
+    resolved, error = validate_dir_path(path_str)
+    if error:
+        return f"Error: {error}"
+
+    try:
+        matches = sorted(resolved.rglob(pattern))
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    lines = []
+    for entry in matches:
+        if entry.is_file():
+            try:
+                rel = entry.relative_to(CWD)
+            except ValueError:
+                rel = entry
+            lines.append(str(rel))
+
+    if not lines:
+        return f"No files matching '{pattern}'"
+
+    return "\n".join(lines)
+
+
+def handle_search_text(args: dict) -> str:
+    """Handle the search_text tool call. Returns matching lines with context."""
+    pattern = args.get("pattern", "")
+    path_str = args.get("path", ".")
+    include = args.get("include", "*")
+
+    if not pattern:
+        return "Error: pattern is required."
+
+    resolved, error = validate_dir_path(path_str)
+    if error:
+        return f"Error: {error}"
+
+    try:
+        files = sorted(resolved.rglob(include))
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    files = [f for f in files if f.is_file()]
+    results = []
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as exc:
+        return f"Error: Invalid regex pattern: {exc}"
+
+    for file_path in files:
+        try:
+            if file_path.stat().st_size > MAX_FILE_BYTES:
+                continue
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except (PermissionError, OSError):
+            continue
+
+        for line_num, line in enumerate(content.splitlines(), 1):
+            if regex.search(line):
+                try:
+                    rel = file_path.relative_to(CWD)
+                except ValueError:
+                    rel = file_path
+                results.append(f"{rel}:{line_num}: {line}")
+
+    if not results:
+        return f"No matches for '{pattern}'"
+
+    if len(results) > 100:
+        results = results[:100] + [f"... ({len(results) - 100} more matches)"]
+
+    return "\n".join(results)
+
+
+def handle_read_file(args: dict) -> str:
+    """Handle the read_file tool call. Returns file contents."""
+    path_str = args.get("path", "")
+    offset = args.get("offset", 1)
+    limit = args.get("limit", MAX_READ_LINES)
+
+    resolved, error = validate_file_path(path_str)
+    if error:
+        return f"Error: {error}"
+
+    if not resolved.is_file():
+        return f"Error: File not found: {path_str}"
+
+    try:
+        size = resolved.stat().st_size
+        if size > MAX_FILE_BYTES:
+            return f"Error: File too large ({size} bytes). Max: {MAX_FILE_BYTES} bytes."
+        content = resolved.read_text(encoding="utf-8")
+    except Exception as exc:
+        return f"Error reading file: {exc}"
+
+    lines = content.splitlines()
+    start = max(0, offset - 1)
+    end = start + limit
+    selected = lines[start:end]
+    total_lines = len(lines)
+
+    try:
+        rel_path = resolved.relative_to(CWD)
+    except ValueError:
+        rel_path = resolved
+
+    header = f"📄 {rel_path} (lines {start + 1}-{min(end, total_lines)} of {total_lines})\n"
+    return header + "\n".join(selected)
 
 
 def handle_create_file(args: dict) -> str:
-    """Handle the create_file tool call.  Returns a result string for the model."""
+    """Handle the create_file tool call. Returns result message."""
     path_str = args.get("path", "")
     content = args.get("content", "")
 
@@ -232,18 +495,15 @@ def handle_create_file(args: dict) -> str:
     lines = content.splitlines()
     lexer = guess_lexer(resolved)
 
-    # Display preview
     action = "overwrite" if exists else "create"
     console.print(
-        f"  [tool]▸ {action}: {resolved.relative_to(CWD)} "
-        f"({len(lines)} lines)[/tool]"
+        f"  [tool]▸ {action}: {resolved.relative_to(CWD)} ({len(lines)} lines)[/tool]"
     )
 
-    # Show content preview
     if len(lines) <= 40:
         console.print(Syntax(content, lexer, theme="monokai", line_numbers=True))
     else:
-        preview = "\n".join(lines[:20]) + f"\n\n... [{len(lines) - 30} lines] ...\n\n" + "\n".join(lines[-10:])
+        preview = "\n".join(lines[:20]) + f"\n\n... [{len(lines) - 40} lines omitted] ...\n\n" + "\n".join(lines[-10:])
         console.print(Syntax(preview, lexer, theme="monokai", line_numbers=True))
 
     if exists:
@@ -252,7 +512,6 @@ def handle_create_file(args: dict) -> str:
     if not confirm_write(f"[bold]Apply {action}? [y/n]:[/bold]"):
         return "User rejected the file write."
 
-    # Write the file
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
@@ -262,7 +521,7 @@ def handle_create_file(args: dict) -> str:
 
 
 def handle_edit_file(args: dict) -> str:
-    """Handle the edit_file tool call.  Returns a result string for the model."""
+    """Handle the edit_file tool call. Returns result message."""
     path_str = args.get("path", "")
     old_str = args.get("old_str", "")
     new_str = args.get("new_str", "")
@@ -284,23 +543,18 @@ def handle_edit_file(args: dict) -> str:
 
     count = original.count(old_str)
     if count == 0:
-        return "Error: old_str not found in file. Read the file first to get the exact text."
+        return "Error: old_str not found in file. Read the file first."
     if count > 1:
-        return f"Error: old_str appears {count} times in file. Make it more specific so it matches exactly once."
+        return f"Error: old_str appears {count} times. Make it more specific."
 
-    # Build diff preview
-    rel_path = resolved.relative_to(CWD)
-    lexer = guess_lexer(resolved)
-
-    # Find the line range for context
     before_match = original[: original.index(old_str)]
     start_line = before_match.count("\n") + 1
     old_lines = old_str.splitlines()
     new_lines = new_str.splitlines()
 
+    rel_path = resolved.relative_to(CWD)
     console.print(f"  [tool]▸ edit: {rel_path} (line {start_line})[/tool]")
 
-    # Use word-level highlighting with side-by-side view
     SIDE_BY_SIDE_MIN_WIDTH = 100
     SIDE_BY_SIDE_MAX_LINES = 30
     use_side_by_side = (
@@ -309,45 +563,38 @@ def handle_edit_file(args: dict) -> str:
     )
 
     if use_side_by_side:
-        col_width = (console.width - 12) // 2  # 12 for borders/padding
+        col_width = (console.width - 12) // 2
         table = Table(show_header=True, box=None, padding=(0, 1))
         table.add_column("before", width=col_width, no_wrap=True)
         table.add_column("after", width=col_width, no_wrap=True)
-        pairs = zip(
-            old_lines + [""] * max(0, len(new_lines) - len(old_lines)),
-            new_lines + [""] * max(0, len(old_lines) - len(new_lines)),
-        )
-        for old_line, new_line in pairs:
-            old_text, new_text = highlight_word_diff(old_line, new_line)
-            table.add_row(old_text, new_text)
+        max_len = max(len(old_lines), len(new_lines))
+        for i in range(max_len):
+            ol = old_lines[i] if i < len(old_lines) else ""
+            nl = new_lines[i] if i < len(new_lines) else ""
+            ot, nt = highlight_word_diff(ol, nl)
+            table.add_row(ot, nt)
         console.print(table)
     else:
-        # Sequential view with word-level highlighting
-        for old_line, new_line in zip(old_lines, new_lines):
-            if old_line == new_line:
-                console.print(f"  {old_line}")
+        max_len = max(len(old_lines), len(new_lines), 1)
+        for i in range(max_len):
+            ol = old_lines[i] if i < len(old_lines) else ""
+            nl = new_lines[i] if i < len(new_lines) else ""
+            if ol == nl:
+                console.print(f"  {ol}")
             else:
-                old_text, new_text = highlight_word_diff(old_line, new_line)
-                console.print(Text.assemble(("  - ", "red"), old_text))
-                console.print(Text.assemble(("  + ", "green"), new_text))
-        # Handle length mismatch
-        if len(old_lines) > len(new_lines):
-            for old_line in old_lines[len(new_lines):]:
-                console.print(Text.assemble(("  - ", "red"), Text(old_line, style="strike red")))
-        elif len(new_lines) > len(old_lines):
-            for new_line in new_lines[len(old_lines):]:
-                console.print(Text.assemble(("  + ", "green"), Text(new_line, style="bold green")))
-        if not new_str and old_str:
-            console.print("  [green]+ (deleted)[/green]")
+                ot, nt = highlight_word_diff(ol, nl)
+                if ol:
+                    console.print(Text.assemble(("  - ", "red"), ot))
+                if nl:
+                    console.print(Text.assemble(("  + ", "green"), nt))
 
     if not confirm_write("[bold]Apply edit? [y/n]:[/bold]"):
         return "User rejected the edit."
 
-    # Apply the edit
     try:
         new_content = original.replace(old_str, new_str, 1)
         resolved.write_text(new_content, encoding="utf-8")
-        return f"Edited {rel_path}: replaced {len(old_lines)} lines with {len(new_lines)} lines at line {start_line}."
+        return f"Edited {rel_path}: {len(old_lines)} lines → {len(new_lines)} lines at line {start_line}."
     except Exception as exc:
         return f"Error writing file: {exc}"
 
@@ -359,26 +606,23 @@ def handle_edit_file(args: dict) -> str:
 
 def display_tool_call(name: str, args: dict):
     """Display a tool call being made."""
-    if name == "bash":
-        cmd = args.get("command", "")
-        console.print(f"  [tool]▸ {cmd}[/tool]")
+    if name == "list_files":
+        path = args.get("path", ".")
+        recursive = args.get("recursive", False)
+        suffix = " (recursive)" if recursive else ""
+        console.print(f"  [tool]▸ list_files: {path}{suffix}[/tool]")
+    elif name == "search_files":
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+        console.print(f"  [tool]▸ search_files: {path} '**/{pattern}'[/tool]")
+    elif name == "search_text":
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+        include = args.get("include", "*")
+        console.print(f"  [tool]▸ search_text: {path} '**/{include}' grep '{pattern}'[/tool]")
+    elif name == "read_file":
+        path = args.get("path", "")
+        offset = args.get("offset", 1)
+        limit = args.get("limit", MAX_READ_LINES)
+        console.print(f"  [tool]▸ read_file: {path} (lines {offset}-{offset + limit - 1})[/tool]")
     # create_file and edit_file handle their own display
-
-
-def display_tool_result(result: dict):
-    """Display the result of a tool call."""
-    rc = result.get("returncode", 1)
-    out = result.get("stdout", "").strip()
-    err = result.get("stderr", "").strip()
-    if err:
-        console.print(f"  [warning]stderr: {err[:500]}[/warning]")
-    if out:
-        # Show a short preview if long
-        lines = out.splitlines()
-        if len(lines) > 30:
-            preview = "\n".join(lines[:15]) + f"\n... ({len(lines)} lines total)"
-            console.print(Syntax(preview, "text", theme="monokai", line_numbers=False))
-        else:
-            console.print(Syntax(out, "text", theme="monokai", line_numbers=False))
-    if rc != 0 and not err:
-        console.print(f"  [warning]exit code {rc}[/warning]")

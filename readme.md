@@ -1,6 +1,6 @@
 # agenc
 
-A coding agent that runs in your terminal and connects to any OpenAI-compatible endpoint. It explores your repo with sandboxed shell commands, reviews your code, creates and edits files, and can stage and commit changes.
+A coding agent that runs in your terminal and connects to any OpenAI-compatible endpoint. It explores your repo with safe, specific tools — no shell execution.
 
 ## Quick start
 
@@ -33,15 +33,19 @@ make run
 
 ## Features
 
-- **Interactive REPL** — conversational coding assistant in your terminal, with history and multi-line input (paste freely; Alt+Enter inserts a newline, Enter sends)
-- **File creation & editing** — `create_file` for new files, `edit_file` for surgical string-replacement edits, both with user confirmation
-- **Sandboxed shell** — `ls`, `cat`, `grep`, `find`, `rg`, etc. for exploring code; destructive commands are blocked
-- **Git integration** — read repo state (`status`, `diff`, `log`, `blame`, ...) and make commits (`add`, `commit`)
-- **GitHub CLI** — read issues and PRs with `gh` (read-only allow-list)
-- **Smart output compression** — successful commands are summarized to save context; failures preserve full detail
-- **Path jailing** — all file access is restricted to the current working directory
+- **Interactive REPL** — conversational coding assistant with history and multi-line input (Alt+Enter for newline, Enter sends)
+- **6 specific tools** — no shell execution. Each tool is a safe, bounded operation:
+  - `list_files` — directory listing (optional recursive)
+  - `search_files` — find files by glob pattern
+  - `search_text` — grep-like text search
+  - `read_file` — read file contents with offset/limit
+  - `create_file` — write new files
+  - `edit_file` — surgical string replacement
+- **Path jailing** — all file access restricted to the current working directory
+- **User confirmation** — file writes require approval (or set `AGENC_AUTO_WRITE=1`)
 - **Any OpenAI-compatible endpoint** — works with OpenAI, Ollama, OpenRouter, llama.cpp, vLLM, etc.
 - **Rich terminal output** — markdown rendering, syntax highlighting, diff previews
+- **Token tracking** — cumulative session usage via `/tokens`
 
 ## REPL commands
 
@@ -52,7 +56,6 @@ make run
 | `/clear`         | Clear conversation history     |
 | `/model <n>`     | Switch model (tab-complete)    |
 | `/models`        | List available models          |
-| `/run <cmd>`     | Run a shell command directly   |
 | `/tokens`        | Show session token usage       |
 
 ### Key bindings
@@ -61,85 +64,26 @@ make run
 |----------------|--------------------------------|
 | Enter          | Send message                   |
 | Alt+Enter      | Insert newline                 |
-| Ctrl+C         | Cancel current input           |
 
-## File editing
+## Tools
 
-The agent has two tools for modifying files:
+### `list_files(path, all, recursive)`
+List files and directories. `path` defaults to ".". Set `recursive=True` for recursive listing. `all=True` includes hidden files.
 
-**`create_file`** — write a new file or overwrite an existing one. The agent provides the full file content. Use for new files or full rewrites.
+### `search_files(path, pattern)`
+Find files by glob pattern. `pattern` examples: `"*.py"`, `"test_*"`, `"**/*.md"`.
 
-**`edit_file`** — surgical string replacement. The agent specifies an exact string to find (`old_str`) and its replacement (`new_str`). The match must be unique in the file. Use for focused, minimal edits.
+### `search_text(path, pattern, include)`
+Search file contents for text/regex. Returns matching lines with `file:line: content`. `include` filters files (e.g. `"*.py"`).
 
-Both tools show a preview and require user confirmation before writing:
+### `read_file(path, offset, limit)`
+Read file contents. `offset` is 1-indexed line number (default: 1). `limit` is max lines (default: 2000). Files >1MB are rejected.
 
-```
-  ▸ create: src/utils.py (24 lines)
-  1 def parse_config(path: str):
-  2     ...
-  Apply create? [y/n]:
+### `create_file(path, content)`
+Create a new file or overwrite an existing one. Shows a preview and requires user confirmation.
 
-  ▸ edit: src/main.py (line 12)
-  - old_value = get_data()
-  + old_value = get_data(timeout=30)
-  Apply edit? [y/n]:
-```
-
-Set `AGENC_AUTO_WRITE=1` to skip confirmations (auto-approve all writes).
-
-## Git support
-
-The agent can interact with git at the subcommand level:
-
-**Allowed (read):** `status`, `diff`, `log`, `show`, `blame`, `shortlog`, `describe`, `branch`, `tag`, `stash list`, `stash show`, `ls-files`, `ls-tree`, `rev-parse`, `rev-list`, `cat-file`, `name-rev`, `reflog`
-
-**Allowed (write):** `add`, `commit`
-
-**Blocked:** `push`, `pull`, `fetch`, `reset`, `rebase`, `cherry-pick`, `merge`, `checkout`, `switch`, `clean`, `rm`, `restore`, and any other subcommand not in the allow-list. The flags `--force`, `--hard`, `--delete`, `-d`/`-D`, `--mirror`, `--bare`, and `--no-verify` are also blocked globally.
-
-## GitHub CLI support
-
-The agent can read from GitHub using the `gh` CLI (must be installed separately):
-
-**Allowed:** `gh issue list/view/status`, `gh pr list/view/status/checks/diff`, `gh repo list/view`, `gh help`, `gh version`
-
-**Blocked:** `create`, `edit`, `close`, `reopen`, `delete`, `merge`, `checkout`, `convert`, `sync`, `ready`, `develop`, and any command with `--body`, `--title`, or `-d`/`--delete` flags.
-
-## Output compression
-
-Command output is automatically compressed to keep the model's context window clean. Content commands (`cat`, `grep`, `git diff`, `git log`, etc.) are never compressed on success. Non-content commands (`ls`, `find`, `tree`, `git status`, etc.) are compressed:
-
-| Scenario                  | Behavior                                           |
-|---------------------------|----------------------------------------------------|
-| Success, ≤60 lines        | Passed through unchanged                           |
-| Success, 61–200 lines     | First 10 + last 20 lines, with omission note       |
-| Success, >200 lines       | Last 30 lines + total count                        |
-| Failure, ≤120 lines       | Passed through unchanged (full context for debug)  |
-| Failure, >120 lines       | Last 80 lines + total count                        |
-
-Stderr is always preserved in full on failure. A byte-level safety net truncates at 100KB regardless.
-
-## Security model
-
-The agent runs in a multi-layer sandbox:
-
-**Layer 1 — Command validation (bash tool):**
-- Read-only utilities are allow-listed: `ls`, `cat`, `grep`, `head`, `tail`, `find`, `tree`, `wc`, `rg`, `fd`, `diff`, `awk`, `sed`, `sort`, `uniq`, `cut`, `tr`, etc.
-- `git` is validated at the subcommand level (see above).
-- `sed -i` (in-place edit) is explicitly blocked.
-- Dangerous patterns are rejected with word-boundary matching: `rm`, `mv`, `cp`, `curl`, `python`, `sudo`, `bash`, `$(...)`, backticks, output redirection (`>`, `>>`), etc.
-
-**Layer 2 — Path jailing (all tools):**
-- All path arguments are resolved and must stay within `$CWD`.
-- Symlink escapes are caught by `Path.resolve()`.
-
-**Layer 3 — User confirmation (write tools):**
-- `create_file` and `edit_file` show a preview and require `y/n` approval.
-- Set `AGENC_AUTO_WRITE=1` to auto-approve.
-
-**Layer 4 — Resource limits:**
-- Shell commands time out after 30 seconds.
-- Output is capped at 100KB.
+### `edit_file(path, old_str, new_str)`
+Surgical string replacement. `old_str` must match exactly once in the file. Shows a word-level diff and requires user confirmation.
 
 ## Configuration
 
@@ -154,19 +98,17 @@ The agent runs in a multi-layer sandbox:
 
 ```
 agent.py        — main entry point, system prompt, REPL loop, agent logic
-config.py       — environment variables, allow/block lists, constants
-git.py          — git subcommand validation
-sandbox.py      — command validation, path jailing, output compression, run_shell()
-tools.py        — tool schema, handlers for bash/create_file/edit_file, display helpers
+config.py       — environment variables, constants
+tools.py        — tool schemas, path validation, all handlers
 ```
 
-**Module dependencies:**
-```
-agent.py
-  └── tools.py
-        └── sandbox.py
-              └── git.py
-              └── config.py
-```
+**Modules removed:** `sandbox.py`, `git.py`, `gh.py` — replaced with specific tool handlers.
 
 The agent uses a simple agentic loop: it sends the conversation to the model, and if the model responds with tool calls, it executes them and feeds results back until the model produces a final text response.
+
+## Security model
+
+- **No shell execution** — the agent cannot run arbitrary commands. Every operation is a specific, bounded tool.
+- **Path jailing** — all file/directory paths are resolved and checked to stay within the working directory.
+- **User confirmation** — `create_file` and `edit_file` show previews and require `y/n` approval.
+- **File size limits** — files >1MB cannot be read; text search skips large files.
