@@ -514,7 +514,7 @@ def main():
                 print_tokens(usage)
                 continue
             elif primary_cmd == "/onboard":
-                user_input = """Use list_files to get an overview of the repository, then read_file on the README and key source files. Summarize the project's purpose, architecture, and main components."""
+                user_input = """Onboard yourself to this repository concisely. Read the following files if they exist, in order: README.md (or readme.md), then pyproject.toml or package.json or similar dependency/config file. Do not read source files unless the README is missing or contains no useful information. Summarize the project's purpose and structure in a few sentences."""
             elif primary_cmd == "/shell":
                 handle_shell_command(messages)
                 continue
