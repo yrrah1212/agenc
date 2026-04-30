@@ -2,13 +2,11 @@
 """
 agenc — a code review agent that connects to any OpenAI-compatible endpoint.
 
-It explores your repo with sandboxed shell commands and gives you feedback on your code.
+It explores your repo with safe, specific tools and gives feedback on your code.
 """
 
 import json
-import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
 from openai import OpenAI
 from prompt_toolkit import PromptSession
@@ -25,8 +23,11 @@ from config import API_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL, CWD
 from tools import (
     TOOLS,
     display_tool_call,
-    display_tool_result,
-    handle_bash,
+
+    handle_list_files,
+    handle_search_files,
+    handle_search_text,
+    handle_read_file,
     handle_create_file,
     handle_edit_file,
 )
@@ -36,7 +37,7 @@ from tools import (
 # ---------------------------------------------------------------------------
 
 PROMPT_STYLE = Style.from_dict({
-    "blue": "#0087ff",  # Bright blue
+    "blue": "#0087ff",
     "dim": "#555555",
 })
 
@@ -58,20 +59,18 @@ class TokenUsage:
 # Slash command completion
 # ---------------------------------------------------------------------------
 
-# Maps primary command names to their aliases. Only primary names are shown in completions.
 SLASH_COMMANDS = {
     "/help": [],
     "/quit": ["/exit", "/q"],
     "/clear": [],
     "/model": [],
     "/models": [],
-    "/run": [],
     "/tokens": ["/usage"],
 }
 
 
 def get_slash_command_aliases():
-    """Return a flat dict mapping all command names (including aliases) to their primary name."""
+    """Return a flat dict mapping all command names to their primary name."""
     aliases = {}
     for primary, alias_list in SLASH_COMMANDS.items():
         aliases[primary] = primary
@@ -104,15 +103,12 @@ class SlashCommandCompleter(Completer):
         text = document.text_before_cursor
         words = text.split()
         
-        # Model name completion after '/model ' (check before split() loses the space)
         if text.rstrip().endswith("/model") and text.endswith(" "):
-            # User typed "/model " and is looking for model names
             models = self._get_models()
             for model in models:
                 yield Completion(model, start_position=0)
             return
         
-        # Model name completion when typing "/model <partial>"
         if len(words) >= 2 and words[-2] == "/model" and not words[-1].startswith("/"):
             models = self._get_models()
             current_word = words[-1]
@@ -121,16 +117,15 @@ class SlashCommandCompleter(Completer):
                     yield Completion(model, start_position=-len(current_word))
             return
 
-        # If text ends with space, don't complete slash commands
         if text.endswith(" "):
             return
 
-        # Slash command completion
         if words and words[-1].startswith("/"):
             current_word = words[-1]
             for cmd in SLASH_COMMANDS.keys():
                 if cmd.startswith(current_word):
                     yield Completion(cmd, start_position=-len(current_word))
+
 
 # ---------------------------------------------------------------------------
 # Fetch available models
@@ -161,49 +156,50 @@ You are **agenc**, a concise, direct coding assistant running inside a developer
 {CWD}
 
 ## Principles
-1. **Gather context before acting.** Use `bash` to read files before editing, check `git status` before committing, and verify state after making changes. Don't guess at contents.
+1. **Gather context before acting.** Use `list_files` or `search_files` to find files, `read_file` to read them before editing. Don't guess at paths or contents.
 2. **Be specific.** Reference file names, line numbers, and function names.
-3. **Think before you conclude.** When analyzing complex problems, trace the actual code flow step-by-step. Follow the data, verify assumptions, and distinguish between display logic vs. functional logic. Don't report issues until you've traced the full execution path.
-4. **Act, don't ask.** When a request is slightly ambiguous, pick the most reasonable interpretation, proceed, and note your assumption. Only ask for clarification when the request is genuinely unanswerable without it.
-5. **Give actionable feedback.** Concrete suggestions the developer can apply — not vague observations.
+3. **Think before you conclude.** Trace the actual code flow step-by-step. Follow the data, verify assumptions. Distinguish display logic from functional logic. Don't report issues until you've traced the full execution path.
+4. **Act, don't ask.** When a request is slightly ambiguous, pick the most reasonable interpretation and proceed.
+5. **Give actionable feedback.** Concrete suggestions — not vague observations.
 6. **When reviewing, look for:** bugs, edge cases, naming, structure, performance, security, readability.
 
 ## Tools
 
-### bash
-- Read-only utilities: ls, cat, grep, find, head, tail, tree, rg, sed (for reading), etc.
-- Command output is automatically compressed — on success you may see only the tail of long outputs. If you need specific lines from the middle, use head/tail/sed to extract them.
+You have exactly 6 tools. You cannot run arbitrary shell commands.
 
-### File editing
-- Use `edit_file` for surgical changes — always read the file first to get exact text for old_str.
-- Use `create_file` for new files or full rewrites.
-- The user must approve every write — if they reject, adjust your approach.
-- Make focused, minimal edits. Don't rewrite entire files when a small edit will do.
-- For multi-file changes: make all edits, then verify the result with `git diff` or by reading the changed files.
+### `list_files(path, all, recursive)`
+List files and directories. `path` defaults to ".". Set `recursive=True` for recursive listing. `all=True` includes hidden files.
 
-### Git
-- **Allowed:** `git status`, `git diff`, `git log`, `git show`, `git blame`, `git branch`, `git add`, `git commit`, `git checkout -b`.
-- **Blocked:** reset, push, rebase, cherry-pick, merge, `checkout <existing-branch>`, clean, and any other destructive operation.
-- Write clear, conventional commit messages.
-- **Branch workflow:** When starting new work, create a feature branch from the latest `main`: `git checkout -b feature/<name>`. Never push directly to `main`.
+### `search_files(path, pattern)`
+Find files by glob pattern. `pattern` examples: `"*.py"`, `"test_*"`, `"**/*.md"`.
 
-### GitHub CLI (gh)
-- **Allowed (read-only):** `gh issue list/view/status`, `gh pr list/view/status/checks/diff`, `gh repo list/view`, `gh help`, `gh version`.
-- **Blocked:** create, edit, close, reopen, delete, merge, checkout, api, and any command with `--body`, `--title`, or `-d`/`--delete`.
-- Use `gh` to fetch GitHub issues, PRs, and repo info when the user asks about them.
+### `search_text(path, pattern, include)`
+Search file contents for text/regex. Returns matching lines with file:line numbers. `include` filters files (e.g. `"*.py"`).
 
-## Technical limits
-- All paths must stay within the working directory.
-- If you need information, explore with bash — don't assume.
-- If a command fails or an edit doesn't apply, read the error carefully, diagnose the issue, and retry with a corrected approach. Don't repeat the same failing command.
+### `read_file(path, offset, limit)`
+Read file contents. `offset` is 1-indexed line number (default: 1). `limit` is max lines (default: 2000). Files >1MB are rejected.
+
+### `create_file(path, content)`
+Create a new file or overwrite an existing one. User must approve.
+
+### `edit_file(path, old_str, new_str)`
+Surgical string replacement. `old_str` must match exactly once. User sees a diff and must approve.
 
 ## Behavioral guidelines
-- Only make the changes you were asked to make. Do not modify behaviour, expand permissions, or refactor anything beyond the scope of the request.
-- Don't suggest or perform refactors, linting fixes, or style changes unless the user specifically asks.
-- **Do not commit changes to git until the user explicitly asks you to.** Stage changes with `git add` and show a diff preview, but wait for confirmation before running `git commit`.
-- Prefer simple, direct solutions. Avoid unnecessary abstractions, modes, or indirection. The right amount of code is the minimum that correctly solves the problem.
-- Never echo or log secrets, tokens, API keys, or credentials. Be cautious with any command that deletes or overwrites data.
-- Use markdown for formatting. Keep responses concise — a terminal is not the place for essays.
+- Only make the changes you were asked to make. Do not modify behaviour or refactor beyond scope.
+- **Do not commit changes** — you don't have git tools.
+- Prefer simple, direct solutions. Avoid unnecessary abstractions.
+- Never echo or log secrets, tokens, API keys, or credentials.
+- Use markdown for formatting. Keep responses concise.
+
+### Math formatting
+Do **not** use LaTeX math syntax (e.g. `$...$`, `$$...$$`, `\\frac`, `\\sum`, etc.). The terminal cannot render LaTeX. Instead:
+- Use plain text: `x² + y² = z²` or `x^2 + y^2 = z^2`
+- Use Unicode: `π`, `√`, `±`, `∞`, `∫`, `∑`, `Π`
+- For equations, use code blocks with ASCII/Unicode:
+  ```
+  x = (-b ± √(b² - 4ac)) / 2a
+  ```
 """
 
 # ---------------------------------------------------------------------------
@@ -221,20 +217,15 @@ console = Console(
 )
 
 
-def make_session(client: OpenAI = None) -> PromptSession:
-    """Create a PromptSession with multi-line support.
-
-    Enter submits. Alt+Enter inserts a newline. Pasting multi-line text works
-    automatically via bracketed paste. Typing / shows slash command completions.
-    After '/model ' shows model name completions.
-    """
+def make_session(client=None) -> PromptSession:
+    """Create a PromptSession with multi-line support."""
     bindings = KeyBindings()
 
     @bindings.add("enter")
     def _(event):
         event.current_buffer.validate_and_handle()
 
-    @bindings.add("escape", "enter")  # Alt+Enter
+    @bindings.add("escape", "enter")
     def _(event):
         event.current_buffer.insert_text("\n")
 
@@ -254,10 +245,7 @@ def make_client() -> OpenAI:
 
 
 def chat_turn(client: OpenAI, messages: list, model: str) -> tuple[str, TokenUsage]:
-    """Run one turn of the agentic loop: call the model, execute any tool calls, repeat.
-    
-    Returns: (reply_text, token_usage_for_this_turn)
-    """
+    """Run one turn of the agentic loop."""
     turn_usage = TokenUsage()
     
     while True:
@@ -268,7 +256,6 @@ def chat_turn(client: OpenAI, messages: list, model: str) -> tuple[str, TokenUsa
             tool_choice="auto",
         )
 
-        # Track token usage
         if response.usage:
             turn_usage.add(
                 response.usage.prompt_tokens,
@@ -277,15 +264,11 @@ def chat_turn(client: OpenAI, messages: list, model: str) -> tuple[str, TokenUsa
             )
 
         msg = response.choices[0].message
-
-        # Append the assistant message to history
         messages.append(msg.model_dump(exclude_none=True))
 
-        # If no tool calls, we're done — return the text
         if not msg.tool_calls:
             return msg.content or "", turn_usage
 
-        # Process each tool call
         for tc in msg.tool_calls:
             fn = tc.function
             try:
@@ -295,31 +278,29 @@ def chat_turn(client: OpenAI, messages: list, model: str) -> tuple[str, TokenUsa
 
             display_tool_call(fn.name, args)
 
-            if fn.name == "bash":
-                _, result = handle_bash(args)
-                display_tool_result(result)
-                # Build tool output string
-                tool_output = ""
-                if result["stdout"]:
-                    tool_output += result["stdout"]
-                if result["stderr"]:
-                    tool_output += f"\nSTDERR: {result['stderr']}"
-                if not tool_output.strip():
-                    tool_output = "(empty output)"
+            if fn.name == "list_files":
+                result = handle_list_files(args)
+            elif fn.name == "search_files":
+                result = handle_search_files(args)
+            elif fn.name == "search_text":
+                result = handle_search_text(args)
+            elif fn.name == "read_file":
+                result = handle_read_file(args)
             elif fn.name == "create_file":
-                tool_output = handle_create_file(args)
-                console.print(f"  [info]{tool_output}[/info]")
+                result = handle_create_file(args)
+                console.print(f"  [info]{result}[/info]")
             elif fn.name == "edit_file":
-                tool_output = handle_edit_file(args)
-                console.print(f"  [info]{tool_output}[/info]")
+                result = handle_edit_file(args)
+                console.print(f"  [info]{result}[/info]")
             else:
-                tool_output = f"Unknown tool: {fn.name}"
+                result = f"Unknown tool: {fn.name}"
+
 
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": tool_output,
+                    "content": result,
                 }
             )
 
@@ -346,13 +327,11 @@ def print_help():
 - `/clear` — clear conversation history
 - `/model <name>` — switch model (tab-complete model names)
 - `/models` — list available models
-- `/run <command>` — run a shell command directly (unsandboxed)
 - `/tokens` — show token usage for this session
 
 ### Key bindings
 - **Enter** — send message
 - **Alt+Enter** — insert newline
-- Pasting multi-line text works without any special mode
 """
         )
     )
@@ -398,13 +377,10 @@ def main():
         if not user_input:
             continue
 
-        # Slash commands
         if user_input.startswith("/"):
             cmd_parts = user_input.split(maxsplit=1)
             cmd = cmd_parts[0].lower()
             aliases = get_slash_command_aliases()
-
-            # Resolve alias to primary command
             primary_cmd = aliases.get(cmd)
 
             if primary_cmd == "/quit":
@@ -423,7 +399,7 @@ def main():
                     DEFAULT_MODEL = cmd_parts[1]
                     console.print(f"[info]Model set to {DEFAULT_MODEL}[/info]")
                 else:
-                    console.print(Markdown(f"**Current model:** `{DEFAULT_MODEL}`\n\nUsage: `/model <name>` — switch to a different model. Press Tab after `/model ` to browse available models."))
+                    console.print(Markdown(f"**Current model:** `{DEFAULT_MODEL}`\n\nUsage: `/model <name>`"))
                 continue
             elif primary_cmd == "/models":
                 models = get_available_models(client)
@@ -435,13 +411,7 @@ def main():
                     )
                     console.print(f"[info]Available models ({len(models)}):\n{model_list}[/info]")
                 else:
-                    console.print("[warning]No models available (check API connection)[/warning]")
-                continue
-            elif primary_cmd == "/run":
-                if len(cmd_parts) > 1:
-                    subprocess.run(cmd_parts[1], shell=True, cwd=str(CWD))
-                else:
-                    console.print("[warning]Usage: /run <command>[/warning]")
+                    console.print("[warning]No models available[/warning]")
                 continue
             elif primary_cmd == "/tokens":
                 print_tokens(usage)
@@ -453,24 +423,18 @@ def main():
         messages.append({"role": "user", "content": user_input})
 
         try:
-            console.print()  # breathing room
+            console.print()
             reply, turn_usage = chat_turn(client, messages, DEFAULT_MODEL)
-            usage.add(
-                turn_usage.prompt_tokens,
-                turn_usage.completion_tokens,
-                turn_usage.total_tokens
-            )
+            usage.add(turn_usage.prompt_tokens, turn_usage.completion_tokens, turn_usage.total_tokens)
             console.print()
             console.print(Markdown(reply))
             console.print()
         except KeyboardInterrupt:
             console.print("\n[warning]Interrupted.[/warning]")
-            # Remove the dangling message if the model didn't complete its turn
             if messages[-1]["role"] in ("user", "assistant"):
                 messages.pop()
         except Exception as exc:
             console.print(f"\n[bold red]Error:[/bold red] {exc}")
-            # Remove the dangling message if the model didn't complete its turn
             if messages[-1]["role"] in ("user", "assistant"):
                 messages.pop()
 
