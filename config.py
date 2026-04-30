@@ -23,3 +23,11 @@ CWD = Path.cwd().resolve()
 
 MAX_READ_LINES = 2000
 MAX_FILE_BYTES = 1_000_000  # refuse to read files larger than this
+
+# ---------------------------------------------------------------------------
+# Shell command limits
+# ---------------------------------------------------------------------------
+
+SHELL_TIMEOUT = 60  # seconds
+SHELL_MAX_LINES = 100  # lines added to context
+SHELL_MAX_CHARS = 10000  # characters added to context
