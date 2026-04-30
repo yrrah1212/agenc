@@ -285,17 +285,33 @@ def guess_lexer(path: Path) -> str:
     return ext_map.get(path.suffix.lower(), "text")
 
 
-def confirm_write(prompt_text: str) -> bool:
-    """Ask the user to confirm a file write. Returns True if approved."""
+def confirm_write(prompt_text: str, default_yes: bool = False) -> tuple[bool, str]:
+    """Ask the user to confirm a file write. Returns (approved, reason).
+    
+    Args:
+        prompt_text: The prompt message to display.
+        default_yes: If True, empty input counts as yes. If False, empty input counts as no.
+    
+    Returns:
+        Tuple of (approved: bool, feedback: str).
+        feedback is non-empty only when the user typed something other than y/n.
+    """
     if AUTO_WRITE:
         console.print("  [info]auto-approved (AGENC_AUTO_WRITE=1)[/info]")
-        return True
+        return True, ""
     try:
-        response = console.input(f"  {prompt_text} ").strip().lower()
+        response = console.input(f"  {prompt_text} ").strip()
     except (EOFError, KeyboardInterrupt):
         console.print()
-        return False
-    return response in ("y", "yes")
+        return False, ""
+    if response == "":
+        return (True, "") if default_yes else (False, "")
+    if response.lower() in ("y", "yes"):
+        return True, ""
+    if response.lower() in ("n", "no"):
+        return False, ""
+    # User typed something else — treat as feedback
+    return False, response
 
 
 def highlight_word_diff(old_line: str, new_line: str) -> tuple[Text, Text]:
@@ -509,8 +525,11 @@ def handle_create_file(args: dict) -> str:
     if exists:
         console.print(f"  [warning]File exists and will be overwritten.[/warning]")
 
-    if not confirm_write(f"[bold]Apply {action}? [y/n]:[/bold]"):
-        return "User rejected the file write."
+    approved, feedback = confirm_write(f"[bold]Apply {action}? [Y/n/other]:[/bold]", default_yes=True)
+    if not approved:
+        if feedback:
+            return f"User rejected the {action} and provided feedback: '{feedback}'. Revise and retry, or abandon if appropriate."
+        return "User rejected the write."
 
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -588,7 +607,10 @@ def handle_edit_file(args: dict) -> str:
                 if nl:
                     console.print(Text.assemble(("  + ", "green"), nt))
 
-    if not confirm_write("[bold]Apply edit? [y/n]:[/bold]"):
+    approved, feedback = confirm_write("[bold]Apply edit? [Y/n/other]:[/bold]", default_yes=True)
+    if not approved:
+        if feedback:
+            return f"User rejected the edit and provided feedback: '{feedback}'. Revise and retry, or abandon if appropriate."
         return "User rejected the edit."
 
     try:

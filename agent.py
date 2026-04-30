@@ -6,6 +6,7 @@ It explores your repo with safe, specific tools and gives feedback on your code.
 """
 
 import json
+import subprocess
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -19,7 +20,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.theme import Theme
 
-from config import API_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL, CWD
+from config import API_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL, CWD, SHELL_TIMEOUT, SHELL_MAX_LINES, SHELL_MAX_CHARS
 from tools import (
     TOOLS,
     display_tool_call,
@@ -66,6 +67,8 @@ SLASH_COMMANDS = {
     "/model": [],
     "/models": [],
     "/tokens": ["/usage"],
+    "/onboard": [],
+    "/shell": [],
 }
 
 
@@ -328,6 +331,8 @@ def print_help():
 - `/model <name>` — switch model (tab-complete model names)
 - `/models` — list available models
 - `/tokens` — show token usage for this session
+- `/onboard` — explore the repository and summarize its structure and purpose
+- `/shell` — run a shell command and optionally add output to context
 
 ### Key bindings
 - **Enter** — send message
@@ -351,6 +356,97 @@ def print_tokens(usage: TokenUsage):
 """
         )
     )
+
+
+def run_shell_command(command: str) -> tuple[int, str, str]:
+    """Run a shell command and return (exit_code, stdout, stderr)."""
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=SHELL_TIMEOUT,
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", f"Command timed out ({SHELL_TIMEOUT}s limit)"
+    except Exception as e:
+        return -1, "", f"Error executing command: {e}"
+
+
+def truncate_output(text: str) -> str:
+    """Truncate output to prevent context flooding."""
+    if not text:
+        return ""
+    
+    lines = text.splitlines()
+    truncated = False
+    
+    if len(lines) > SHELL_MAX_LINES:
+        lines = lines[:SHELL_MAX_LINES]
+        truncated = True
+    
+    result = "\n".join(lines)
+
+    if len(result) > SHELL_MAX_CHARS:
+        result = result[:SHELL_MAX_CHARS]
+        truncated = True
+
+    if truncated:
+        result += f"\n... [truncated at {SHELL_MAX_LINES} lines / {SHELL_MAX_CHARS} chars]"
+
+    return result
+
+
+def handle_shell_command(messages: list) -> bool:
+    """Handle /shell command. Returns True if output was added to context."""
+    command = console.input("[bold]Shell command:[/bold] ").strip()
+    if not command:
+        console.print("[warning]No command provided.[/warning]")
+        return False
+    
+    console.print(f"[tool]Running: {command}[/tool]")
+    exit_code, stdout, stderr = run_shell_command(command)
+    
+    # Display output (unlimited to user)
+    if stdout:
+        console.print(Panel(stdout, title="stdout", border_style="green"))
+    if stderr:
+        console.print(Panel(stderr, title="stderr", border_style="yellow"))
+    if not stdout and not stderr:
+        console.print("[info](no output)[/info]")
+    
+    console.print(f"[info]Exit code: {exit_code}[/info]")
+    
+    # Ask if user wants to add output to context
+    add_to_context = console.input("[bold]Add output to context? [Y/n]:[/bold] ").strip().lower()
+    if add_to_context in ("", "y", "yes"):
+        # Truncate for context to prevent flooding
+        stdout_truncated = truncate_output(stdout)
+        stderr_truncated = truncate_output(stderr)
+        
+        context_msg = f"""[SHELL COMMAND OUTPUT]
+Command: {command}
+Exit code: {exit_code}
+---
+stdout:
+{stdout_truncated if stdout_truncated else "(empty)"}
+---
+stderr:
+{stderr_truncated if stderr_truncated else "(empty)"}
+---
+[END SHELL OUTPUT]"""
+        
+        messages.append({
+            "role": "user",
+            "content": context_msg
+        })
+        console.print("[info]Output added to context.[/info]")
+        return True
+    else:
+        console.print("[info]Output not added to context.[/info]")
+        return False
 
 
 def main():
@@ -415,6 +511,11 @@ def main():
                 continue
             elif primary_cmd == "/tokens":
                 print_tokens(usage)
+                continue
+            elif primary_cmd == "/onboard":
+                user_input = """Use list_files to get an overview of the repository, then read_file on the README and key source files. Summarize the project's purpose, architecture, and main components."""
+            elif primary_cmd == "/shell":
+                handle_shell_command(messages)
                 continue
             else:
                 console.print(f"[warning]Unknown command: {cmd}[/warning]")
