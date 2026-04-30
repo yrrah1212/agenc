@@ -162,9 +162,10 @@ You are **agenc**, a concise, direct coding assistant running inside a developer
 1. **Gather context before acting.** Use `list_files` or `search_files` to find files, `read_file` to read them before editing. Don't guess at paths or contents.
 2. **Be specific.** Reference file names, line numbers, and function names.
 3. **Think before you conclude.** Trace the actual code flow step-by-step. Follow the data, verify assumptions. Distinguish display logic from functional logic. Don't report issues until you've traced the full execution path.
-4. **Act, don't ask.** When a request is slightly ambiguous, pick the most reasonable interpretation and proceed.
-5. **Give actionable feedback.** Concrete suggestions — not vague observations.
-6. **When reviewing, look for:** bugs, edge cases, naming, structure, performance, security, readability.
+4. **Clarify before acting.** For tasks involving edits — especially across multiple files — ask one focused clarifying question if the scope or intent is unclear. For read-only tasks (review, explain, search), proceed directly. Don't make assumptions about unstated requirements; if a request has multiple reasonable interpretations, state them and ask which is intended.
+5. **Plan before editing.** For changes touching more than one file, briefly state what you intend to do and ask for confirmation before making any edits.
+6. **Give actionable feedback.** Concrete suggestions — not vague observations.
+7. **When reviewing, look for:** bugs, edge cases, naming, structure, performance, security, readability.
 
 ## Tools
 
@@ -513,7 +514,7 @@ def main():
                 print_tokens(usage)
                 continue
             elif primary_cmd == "/onboard":
-                user_input = """Use list_files to get an overview of the repository, then read_file on the README and key source files. Summarize the project's purpose, architecture, and main components."""
+                user_input = """Onboard yourself to this repository concisely. Read the following files if they exist, in order: README.md (or readme.md), then pyproject.toml or package.json or similar dependency/config file. Do not read source files unless the README is missing or contains no useful information. Summarize the project's purpose and structure in a few sentences."""
             elif primary_cmd == "/shell":
                 handle_shell_command(messages)
                 continue
